@@ -69,7 +69,7 @@ test('Budgets reject unsupported capacity and active native compaction',async()=
 });
 test('Launch env removes Electron node mode for the desktop and includes cross-platform wrapper',()=>{
  const env=launchEnvironment({home:'/fixture/control',node:'/fixture/node',runtime:{entry:'/fixture/zcode.cjs'},env:{ELECTRON_RUN_AS_NODE:'1'}});
- assert.equal(env.ELECTRON_RUN_AS_NODE,undefined);assert.equal(env.ZCODE_AGENT_SERVER_COMMAND,'/fixture/node');assert.match(JSON.parse(env.ZCODE_AGENT_SERVER_ARGS_JSON)[0],/wrapper\.mjs$/);
+ assert.equal(env.ELECTRON_RUN_AS_NODE,undefined);assert.equal(env.ZCODE_AGENT_SERVER_COMMAND,undefined);assert.equal(env.ZCODE_AGENT_SERVER_ARGS_JSON,undefined);assert.equal(env.CONTEXT_CONTROL_NODE,'/fixture/node');
 });
 test('Unavailable quotas and updates never report success or use the upstream feed',async()=>{
  assert.equal(createQuotaManager().state().updatedAt,null);assert.equal(createQuotaManager().state().stale,true);

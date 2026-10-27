@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 export function discoverZcode({platform=process.platform,env=process.env,exists=fs.existsSync}={}){
- const win=platform==='win32',p=win?path.win32:path;
+ const win=platform==='win32',p=win?path.win32:path.posix;
  const configured=env.ZCODE_DESKTOP_EXECUTABLE;
  const candidates=configured?[configured]:win?[
   env.LOCALAPPDATA&&p.join(env.LOCALAPPDATA,'Programs','ZCode','ZCode.exe'),

@@ -1,3 +1,4 @@
+import {usageMoney} from './usage-summary.mjs';
 export function projectSidebar({threads=[],sidebar,selected,expanded,recentExpanded=true,t,escape:e,chatName}){
   const chats=new Map(threads.map(chat=>[chat.id,chat]));
   const projects=sidebar?.projects??[],recent=[...threads].sort((a,b)=>(b.lastActivityAt??0)-(a.lastActivityAt??0)).map(chat=>chat.id);
@@ -5,7 +6,7 @@ export function projectSidebar({threads=[],sidebar,selected,expanded,recentExpan
   const row=id=>{
     const chat=chats.get(id);if(!chat)return '';
     const projectName=projectNames.get(id)||t('单独聊天','Standalone chat');
-    return `<button class="chat-button ${selected===id?'selected':''}" data-action="select" data-id="${e(id)}" title="${e(chatName(chat))}" ${selected===id?'aria-current="true"':''}><span class="truncate">${e(chatName(chat))}</span><span class="muted chat-row-meta"><span class="chat-project-name" title="${e(projectName)}">${e(projectName)}</span><span class="chat-connection">${e(chat.connected?t('已接入','Connected'):t('未接入','Not connected'))}</span></span></button>`;
+    return `<button class="chat-button ${selected===id?'selected':''}" data-action="select" data-id="${e(id)}" title="${e(chatName(chat))}" ${selected===id?'aria-current="true"':''}><span class="truncate">${e(chatName(chat))}</span><span class="muted chat-row-meta"><span class="chat-project-name" title="${e(projectName)}">${e(projectName)}</span><span class="chat-connection">${e(chat.connected?t('已接入','Connected'):t('未接入','Not connected'))}</span></span><span class="tiny muted">${e(chat.cumulativeUsage?.available?`${Number(chat.cumulativeUsage.totalTokens).toLocaleString('zh-CN')} token · ${usageMoney(chat.cumulativeUsage)}`:t('累计用量未读取','Usage unavailable'))}</span></button>`;
   };
   const groups=projects.map(project=>{
     const open=expanded.get(project.id)??false;

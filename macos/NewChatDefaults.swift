@@ -36,7 +36,7 @@ struct NewChatDefaultsView:View {
             if model.newChatDefaultsPending {Label(L("首次接入需完整退出并重开 ZCode；之后改默认值无需重启。"),systemImage:"arrow.clockwise").font(.caption).foregroundStyle(.orange)}
             if let notice {Text(L(notice)).font(.callout).foregroundStyle(failed ? .orange:.secondary)}
             HStack{if onClose == nil{Button(L("关闭")){dismiss()}.buttonStyle(.bordered).keyboardShortcut(.cancelAction)};Spacer();if saving{ProgressView().controlSize(.small)};Button(L("保存默认")){Task{await save()}}.buttonStyle(.borderedProminent).disabled(!edited || saving || !model.serviceAvailable || model.newChatDefaultsLimits==nil).keyboardShortcut(.defaultAction)}
-        }.padding(compact ? 20:28).frame(width:compact ? 360:650).background(Color(white:0.095)).preferredColorScheme(.dark)
+        }.padding(compact ? 20:28).frame(width:compact ? 360:650).background(PanelStyle.background).preferredColorScheme(model.theme == "light" ? .light:.dark)
             .onAppear{load()}.onChange(of:model.newChatDefaults?.revision){_,_ in if !edited{load()}}.onChange(of:model.newChatDefaultsLimits){_,_ in load()}
     }
     private func metric(_ title:String,_ value:Int,_ color:Color)->some View {VStack(alignment:.leading,spacing:5){Text("\(value)K").font(.system(size:compact ? 24:28,weight:.medium,design:.rounded)).monospacedDigit().foregroundStyle(color);Text(title).font(.caption).foregroundStyle(.secondary)}}

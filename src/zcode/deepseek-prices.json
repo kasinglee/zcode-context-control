@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "currency": "USD",
+  "unitTokens": 1000000,
+  "checkedAt": "2026-10-27",
+  "source": "https://api-docs.deepseek.com/quick_start/pricing",
+  "note": "DeepSeek 官方美元牌价（美元/百万 token），高峰与低谷两档。官方说明：deepseek-v4-flash 与 deepseek-v4-flash-vision-exp 为旧名称，仍按 Flash 档计价。",
+  "peak": {
+    "hoursUtc": [[1, 4], [6, 10]],
+    "weekdaysUtc": [1, 2, 3, 4, 5],
+    "note": "高峰时段为 UTC 周一至周五 01:00-04:00 与 06:00-10:00；中国法定节假日除外（本机估算未排除节假日）。缺失时间戳按高峰价保守估算。"
+  },
+  "models": {
+    "deepseek-flash": {
+      "aliases": ["deepseek-v4-flash", "deepseek-v4-flash-vision-exp"],
+      "input": {"offPeak": 0.15, "peak": 0.3},
+      "cacheRead": {"offPeak": 0.003, "peak": 0.006},
+      "output": {"offPeak": 0.6, "peak": 1.2}
+    },
+    "deepseek-v4-pro": {
+      "input": {"offPeak": 0.66, "peak": 1.32},
+      "cacheRead": {"offPeak": 0.022, "peak": 0.044},
+      "output": {"offPeak": 1.98, "peak": 3.96}
+    }
+  }
+}

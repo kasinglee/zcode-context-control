@@ -1,9 +1,11 @@
 import {policyForNewChat} from '../core/new-chat-defaults.mjs';
 import {snapshotThread} from './protocol.mjs';
+import {snapshotBilling} from './cost-estimate.mjs';
 export class ZcodeBridge {
  constructor({rpc,notify,policyState}){Object.assign(this,{rpc,notify,policyState});this.records=new Map();this.tasks=new Map();this.refreshing=new Set();this.selections=new Map();}
  async observe(snapshot,{newSession=false}={}){
   const thread=snapshotThread(snapshot);if(!thread)return;
+  thread.nativeBilling=snapshotBilling(snapshot);
   const previous=this.records.get(thread.id),task=this.tasks.get(thread.id);
   const selection=snapshot.session.model??snapshot.settings?.model?.current;if(selection)this.selections.set(thread.id,selection);
   if(task?.status==='running'&&thread.status==='inProgress')task.observedRunning=true;

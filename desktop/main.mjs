@@ -20,6 +20,7 @@ import {quotaIconBitmap} from './quota-icon.mjs';
 import {createTrayController} from './tray-controller.mjs';
 import {createUpdatePrompt} from './update-prompt.mjs';
 import {demoQuotaAnalytics} from './quota-demo.mjs';
+import {uiTheme,themeBackground} from '../src/ui-theme.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url)),repo=path.dirname(here),args=process.argv;
 if(app.isPackaged)process.chdir(repo);
 if(fs.existsSync(path.join(repo,'vendor/node.exe')))process.env.CONTEXT_CONTROL_NODE=path.join(repo,'vendor/node.exe');
@@ -56,6 +57,8 @@ const zh=()=>resolveLanguage(languagePreference())==='zh';
 const label=(a,b)=>zh()?a:b;
 const updateSettingsFile=path.join(root,'ui-settings.json');
 const autoCheckUpdates=()=>readJSON(updateSettingsFile,{}).autoCheckUpdates!==false;
+const appearance=()=>uiTheme(readJSON(updateSettingsFile,{}).theme);
+nativeTheme.themeSource=appearance();
 function setAutoCheckUpdates(enabled){atomicJSON(updateSettingsFile,{...readJSON(updateSettingsFile,{}),autoCheckUpdates:enabled});}
 const refreshUpdateUI=()=>{main?.webContents.send('refresh');trayWindow?.webContents.send('refresh');};
 const updatePrompt=createUpdatePrompt({currentVersion:()=>pkg.version,enabled:autoCheckUpdates,setEnabled:setAutoCheckUpdates,
@@ -112,7 +115,7 @@ async function api(action,params={}){
 const publish=()=>{if(!ready)return;atomicJSON(path.join(root,'ui-status.json'),{pid:process.pid,version:pkg.version,shortcut:shortcutManager.status(),menuReady:trayController.ready,menuImageReady:trayController.ready,menuVisibilityEvidence:'unverified',menuWindowVisible:!!(trayWindow&&!trayWindow.isDestroyed()&&trayWindow.isVisible()),menuOnScreen:null,windowVisible:!!(main&&!main.isDestroyed()&&main.isVisible()),bundleIdentifier:'io.github.zcode-context-control',menuFrame:trayWindow&&!trayWindow.isDestroyed()?trayWindow.getBounds():undefined});};
 async function ensureUiService(){return ensureDaemon();}
 function createWindow(menu=false){
-  const win=new BrowserWindow({width:menu?400:1080,height:menu?450:760,minWidth:menu?320:960,minHeight:menu?180:670,show:false,frame:!menu,resizable:!menu,skipTaskbar:menu,alwaysOnTop:menu,backgroundColor:'#181818',title:'Context Manager',icon:path.join(repo,'macos/Assets/ContextManager.png'),webPreferences:{preload:path.join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+  const win=new BrowserWindow({width:menu?400:1080,height:menu?450:760,minWidth:menu?320:960,minHeight:menu?180:670,show:false,frame:!menu,resizable:!menu,skipTaskbar:menu,alwaysOnTop:menu,backgroundColor:themeBackground(appearance()),title:'Context Manager',icon:path.join(repo,'macos/Assets/ContextManager.png'),webPreferences:{preload:path.join(here,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
   win.setMenuBarVisibility(false);win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',event=>event.preventDefault());
   win.webContents.on('render-process-gone',(_e,details)=>{console.error('UI process exited:',details.reason);if(!quitting)win.reload();});
@@ -180,7 +183,14 @@ ipcMain.handle('context-manager',async(event,action,params)=>{
     const images=params.kind==='image';const result=await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender),{title:label(images?'插入图片':'插入文件',images?'Insert images':'Insert files'),properties:['openFile','multiSelections'],...(images?{filters:[{name:'Images',extensions:['png','jpg','jpeg','webp','gif','bmp']}]}:{})});
     return {attachments:result.canceled?[]:result.filePaths.slice(0,20).map(file=>({path:file,name:path.basename(file),kind:/\.(png|jpe?g|webp|gif|bmp)$/i.test(file)?'image':'file'}))};
   }
-  if(action==='preferences')return {selection:languagePreference(),language:resolveLanguage(languagePreference()),english:JSON.parse(fs.readFileSync(path.join(repo,'src/locales/en.json'),'utf8')),version:pkg.version,demo,autoCheckUpdates:autoCheckUpdates(),quotaPool:readJSON(path.join(root,'ui-settings.json'),{}).quotaPool||null,shortcut:shortcutManager.status(),integration:demo?{enabled:false,registered:false,available:false,inactive:true}:windowsIntegrationStatus()};
+  if(action==='theme'){
+    if(!['light','dark'].includes(params.theme))throw Error('Invalid appearance');
+    atomicJSON(updateSettingsFile,{...readJSON(updateSettingsFile,{}),theme:params.theme});
+    nativeTheme.themeSource=params.theme;
+    for(const window of [main,trayWindow])if(window&&!window.isDestroyed()){window.setBackgroundColor(themeBackground(params.theme));window.webContents.send('refresh');}
+    return {theme:params.theme};
+  }
+  if(action==='preferences')return {theme:appearance(),selection:languagePreference(),language:resolveLanguage(languagePreference()),english:JSON.parse(fs.readFileSync(path.join(repo,'src/locales/en.json'),'utf8')),version:pkg.version,demo,autoCheckUpdates:autoCheckUpdates(),quotaPool:readJSON(path.join(root,'ui-settings.json'),{}).quotaPool||null,shortcut:shortcutManager.status(),integration:demo?{enabled:false,registered:false,available:false,inactive:true}:windowsIntegrationStatus()};
   if(action==='update-preferences'){if(typeof params.enabled!=='boolean')throw Error('Invalid update preference');setAutoCheckUpdates(params.enabled);refreshUpdateUI();return {enabled:autoCheckUpdates()};}
   if(action==='check-update'){const result=await updatePrompt.run();refreshUpdateUI();return result;}
   if(action==='integration-set'){
@@ -199,7 +209,7 @@ ipcMain.handle('context-manager',async(event,action,params)=>{
     const answer=await dialog.showMessageBox(BrowserWindow.fromWebContents(event.sender),{type:'question',title:label('请求 ZCode 原生压缩？','Request native ZCode compaction?'),message:label('请求 ZCode 原生压缩？','Request native ZCode compaction?'),detail:label('压缩可能使用现有模型额度。压缩结果长度无法保证，完成后需要重新测量。','Compaction may use your existing model allowance. Retained length is not guaranteed and must be measured again afterwards.'),buttons:[label('取消','Cancel'),label('请求压缩','Request compaction')],defaultId:0,cancelId:0,noLink:true});return {confirmed:answer.response===1};
   }
   if(action==='open-reference'){
-    const urls={'cloud-sync':'https://github.com/Fandy-ust/zcode-context-control/blob/main/docs/CLOUD_SYNC.md',pricing:'https://openai.com/api/pricing/',caching:'https://developers.openai.com/api/docs/guides/prompt-caching#monitor-cache-performance',compaction:'https://developers.openai.com/api/docs/guides/compaction'};
+    const urls={'cloud-sync':'https://github.com/Fandy-ust/zcode-context-control/blob/main/docs/CLOUD_SYNC.md',pricing:'https://docs.bigmodel.cn/cn/guide/start/pricing',caching:'https://docs.bigmodel.cn/cn/guide/capabilities/cache',compaction:'https://developers.openai.com/api/docs/guides/compaction'};
     if(smoke||!Object.hasOwn(urls,params.id))throw Error('Unknown reference');await shell.openExternal(urls[params.id]);return {ok:true};
   }
   if(action==='quota-select'){

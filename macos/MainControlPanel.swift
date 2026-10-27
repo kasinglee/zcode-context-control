@@ -36,7 +36,7 @@ struct MainControlPanelView:View {
                 }.softScrollEdges()
             }
             if let feedback{Text(L(feedback)).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true)}
-        }.padding(24).frame(width:760,height:560).background(PanelStyle.background).preferredColorScheme(.dark).environment(\.locale,Localization.locale).onAppear{shortcutRecorder.onRecordingChanged={recording in model.onGlobalShortcutRecording?(recording)};shortcutDraft=model.globalShortcut;shortcutEnabled=model.globalShortcutEnabled}.onDisappear{shortcutRecorder.stop()}.onChange(of:tab){_,value in if value != "shortcut"{shortcutRecorder.stop()}}.onChange(of:shortcutEnabled){_,value in if !value{shortcutRecorder.stop()}}.onChange(of:shortcutRecorder.capturedShortcut){value in if let value{shortcutDraft=value;shortcutEnabled=true}}
+        }.padding(24).frame(width:760,height:560).background(PanelStyle.background).preferredColorScheme(model.theme == "light" ? .light:.dark).environment(\.locale,Localization.locale).onAppear{shortcutRecorder.onRecordingChanged={recording in model.onGlobalShortcutRecording?(recording)};shortcutDraft=model.globalShortcut;shortcutEnabled=model.globalShortcutEnabled}.onDisappear{shortcutRecorder.stop()}.onChange(of:tab){_,value in if value != "shortcut"{shortcutRecorder.stop()}}.onChange(of:shortcutEnabled){_,value in if !value{shortcutRecorder.stop()}}.onChange(of:shortcutRecorder.capturedShortcut){value in if let value{shortcutDraft=value;shortcutEnabled=true}}
     }
     private var shortcutSettings:some View {
         VStack(alignment:.leading,spacing:16){
@@ -65,6 +65,8 @@ struct MainControlPanelView:View {
     private var general:some View {
         VStack(alignment:.leading,spacing:18){
             Text(L("通用")).font(.headline)
+            UsageTotalsView(usage:model.usageSummary,global:true)
+            Picker(L("外观"),selection:Binding(get:{model.theme},set:{model.setTheme($0)})){Text(L("深色（黑色）")).tag("dark");Text(L("浅色（白色）")).tag("light")}.pickerStyle(.segmented).accessibilityIdentifier("appearance-picker")
             Picker(L("语言"),selection:Binding(get:{model.languageSelection},set:{model.setLanguage($0)})){Text(L("自动（按时区）")).tag(LanguageChoice.auto);Text("中文").tag(LanguageChoice.zh);Text("English").tag(LanguageChoice.en)}.pickerStyle(.menu).accessibilityIdentifier("language-picker")
             HStack{Button(L("同步本地聊天"),systemImage:"arrow.clockwise"){Task{await model.scanChats();feedback=model.notice}}.disabled(model.working);Button(L("打开 ZCode"),systemImage:"arrow.up.forward.app"){model.launchZCode()}}
             ContextExtensionControl(model:model)

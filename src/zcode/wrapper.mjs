@@ -20,7 +20,14 @@ const rpc=new ZcodeProtocol({send:frame=>{if(!child?.stdin.writable)throw Error(
 process.stdout.on('drain',()=>child?.stdout.resume());
 const bridge=new ZcodeBridge({rpc,policyState,notify:async thread=>peer?peer.call('updateThread',thread):null});
 const newRequests=new Set();
-rpc.on('message',message=>{const newSession=newRequests.delete(message.id);const snapshot=message.result?.snapshot??message.result??message.params?.snapshot;if(snapshot?.session&&snapshot?.projection)void bridge.observe(snapshot,{newSession}).catch(report);else if(message.method==='state.updated'&&typeof message.params?.sessionId==='string')void bridge.refresh(message.params.sessionId).catch(()=>{});});
+rpc.on('message',message=>{const newSession=newRequests.delete(message.id);const snapshot=message.result?.snapshot??message.result??message.params?.snapshot;
+ if(snapshot?.session&&snapshot?.projection)void bridge.observe(snapshot,{newSession}).catch(report);
+ else if(message.method==='state.updated'&&typeof message.params?.sessionId==='string')void bridge.refresh(message.params.sessionId).catch(()=>{});
+ else if(message.method==='v4/conversation/frame'){
+  const topic=message.params?.topic??message.params?.frame?.topic;
+  if(typeof topic==='string'&&topic.startsWith('conversation/')&&topic.length>13){const id=topic.slice(13);if(!bridge.records.has(id))void bridge.refresh(id).catch(report);}
+ }
+});
 function report(error){process.stderr.write('ZCode Context Control: '+error.message+'\n');}
 child=spawn(process.execPath,[entry,...process.argv.slice(2)],{stdio:['pipe','pipe','inherit'],env:{...process.env,ZCODE_CONTROL_POLICY_FILE:policyFile}});
 child.stdout.on('data',chunk=>{try{rpc.ingest(chunk);}catch(e){report(e);child.kill();}});

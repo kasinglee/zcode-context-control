@@ -191,7 +191,7 @@ struct QueueTaskEditor:View {
             HStack{Button(L("返回"),systemImage:"arrow.left",action:close).buttonStyle(.bordered);Text(L(task.status=="draft" ? "添加任务":"任务设置")).font(.title2.bold());Spacer();if tab=="quota"{Button(L(task.status=="draft" ? "添加到队列":"保存任务")){Task{await save()}}.buttonStyle(.borderedProminent).disabled(prompt.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || model.working)}}
             if !expanded{Picker(L("任务设置"),selection:$tab){Text(L("任务内容")).tag("prompt");Text(L("额度设置")).tag("quota")}.pickerStyle(.segmented)}
             if expanded{promptEditor}else{ScrollView{Group{if tab=="quota"{QueueQuotaEditor(config:$settings.quota,showFiveHour:model.queueHasFiveHour(settings.quota.pool)).padding(.vertical,8)}else{promptEditor}}.softScrollEdges()}}
-        }.padding(24).frame(width:expanded ? nil:760,height:expanded ? nil:700).frame(maxWidth:expanded ? .infinity:nil,maxHeight:expanded ? .infinity:nil).background(PanelStyle.background).preferredColorScheme(.dark)
+        }.padding(24).frame(width:expanded ? nil:760,height:expanded ? nil:700).frame(maxWidth:expanded ? .infinity:nil,maxHeight:expanded ? .infinity:nil).background(PanelStyle.background).preferredColorScheme(model.theme == "light" ? .light:.dark)
         .fileImporter(isPresented:$showImporter,allowedContentTypes:imagesOnly ? [.image]:[.item],allowsMultipleSelection:true){result in if case .success(let urls)=result{addURLs(urls)}}
         .onChange(of:settings.model){_,_ in settings.effort=""}
     }

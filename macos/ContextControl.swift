@@ -25,8 +25,34 @@ struct Metadata: Decodable,Equatable { let max_context_window:Int?;let effective
 struct CompensationDetails:Decodable,Equatable {let enabled:Bool;let status:String;let extraTokens:Int;let targetWindow:Int?;let runtimeWindow:Int?;let message:String?}
 struct CompensationState:Decodable,Equatable {let enabled:Bool;let pending:Bool;let message:String}
 struct ResponseSpeed:Decodable,Equatable {let tokensPerSecond:Double;let direction:String?;let samples:[Double?]?}
+
+struct CumulativeUsage:Decodable,Equatable {
+ struct Cost:Decodable,Equatable {let amount:Double?;let amountUSD:Double?;let pricedRequests:Int?;let unpricedRequests:Int?}
+ let available:Bool;let totalTokens:Int?;let inputTokens:Int?;let outputTokens:Int?;let requestCount:Int?;let tasksWithUsage:Int?;let stale:Bool?;let cost:Cost?
+ var money:String {
+  guard available else{return "—"};if requestCount == 0{return "¥0.00"}
+  guard (cost?.pricedRequests ?? 0)>0 else{return "—"}
+  var parts=[String]();if let amount=cost?.amount{parts.append(String(format:"¥%.6f",amount))};if let usd=cost?.amountUSD{parts.append(String(format:"US$%.6f",usd))};return parts.joined(separator:" + ")
+ }
+}
+struct UsageTotalsView:View {
+ let usage:CumulativeUsage?;var global=false
+ var body:some View {
+  VStack(alignment:.leading,spacing:8){
+   Text(L(global ? "所有项目累计用量":"本任务累计用量")).font(.headline)
+   HStack(alignment:.top){VStack(alignment:.leading){Text(L("累计消耗 token")).font(.caption).foregroundStyle(.secondary);Text(usage?.available == true ? (usage?.totalTokens ?? 0).formatted():"—").font(.title3).monospacedDigit()};Spacer();VStack(alignment:.trailing){Text(L("累计金额 · 官方参考价估算")).font(.caption).foregroundStyle(.secondary);Text(usage?.money ?? "—").font(.title3).monospacedDigit()}}
+   if usage?.available == true {
+    Text(L("输入")+" "+(usage?.inputTokens ?? 0).formatted()+" + "+L("输出")+" "+(usage?.outputTokens ?? 0).formatted()).font(.caption).foregroundStyle(.secondary)
+    Text(L("本机用量账本，含子任务、压缩及标题生成；缓存和思考不重复相加。约每 15 秒更新，金额非实际账单。")).font(.caption).foregroundStyle(.secondary)
+    if (usage?.cost?.unpricedRequests ?? 0)>0{Text(L("尚未计入金额的调用：")+String(usage?.cost?.unpricedRequests ?? 0)).font(.caption).foregroundStyle(.orange)}
+    if usage?.stale == true{Text(L("账本读取暂时失败，当前显示上次成功汇总。")).font(.caption).foregroundStyle(.orange)}
+   }else{Text(L("尚未读取到本地用量账本。")).font(.caption).foregroundStyle(.secondary)}
+  }.padding(14).frame(maxWidth:.infinity,alignment:.leading).background(Color.primary.opacity(0.035),in:RoundedRectangle(cornerRadius:12))
+ }
+}
+
 struct Chat: Identifiable, Decodable,Equatable {
-    let id:String;let name:String?;let model:String?;var effort:String?=nil;let cwd:String?;let status:String?
+    var cumulativeUsage:CumulativeUsage?=nil;let id:String;let name:String?;let model:String?;var effort:String?=nil;let cwd:String?;let status:String?
     let connected:Bool;let ambiguous:Bool;let phase:String?;let message:String?
     let taskQueueSupported:Bool?;let taskQueueRestartRequired:Bool?
     var queueRestartRequired:Bool{taskQueueRestartRequired == true || (connected && taskQueueSupported == false)}
@@ -65,12 +91,14 @@ struct QuotaState:Decodable,Equatable {let accounts:[QuotaAccount]?;let resetNot
 struct ControlCapabilities:Decodable {let visibleBudget:Bool?;let quotaAnalytics:Bool?;let creditBaseline:Bool?}
 struct SidebarProject:Decodable,Equatable,Identifiable {let id:String;let name:String;let roots:[String];let threadIds:[String]}
 struct ChatSidebar:Decodable,Equatable {let projects:[SidebarProject];let standaloneThreadIds:[String]}
-struct RuntimeState: Decodable {let quotaActivation:QuotaActivationState?;let taskQueues:TaskQueuesState?;let queueModels:[QueueModel]?;let apiVersion:Int?;let capabilities:ControlCapabilities?;let quota:QuotaState?;let update:UpdateState?;let version:String;let bridgeCount:Int;let threads:[Chat];let sidebar:ChatSidebar?;let runtimeFix:RuntimeFixState?;let contextCeilingPending:Bool?;let newChatDefaults:NewChatDefaultsState?;let newChatDefaultsPending:Bool?;let contextExtension:ContextExtensionState?;let compactionCompensation:CompensationState?;let newChatDefaultsLimits:NewChatDefaultsLimits?}
+struct RuntimeState: Decodable {let usageSummary:CumulativeUsage?;let quotaActivation:QuotaActivationState?;let taskQueues:TaskQueuesState?;let queueModels:[QueueModel]?;let apiVersion:Int?;let capabilities:ControlCapabilities?;let quota:QuotaState?;let update:UpdateState?;let version:String;let bridgeCount:Int;let threads:[Chat];let sidebar:ChatSidebar?;let runtimeFix:RuntimeFixState?;let contextCeilingPending:Bool?;let newChatDefaults:NewChatDefaultsState?;let newChatDefaultsPending:Bool?;let contextExtension:ContextExtensionState?;let compactionCompensation:CompensationState?;let newChatDefaultsLimits:NewChatDefaultsLimits?}
 struct Connection: Decodable {let port:Int;let token:String}
 struct DesktopSettings: Decodable {let desktopExecutable:String}
 struct ServiceSettings: Decodable {let node:String}
 
 @MainActor final class Controller: ObservableObject {
+    @Published var usageSummary:CumulativeUsage?
+    @Published var theme="dark"
     @Published var languageSelection=Localization.choice
     @Published var languageRevision=0
     @Published var globalShortcut="Control+Shift+M"
@@ -81,6 +109,8 @@ struct ServiceSettings: Decodable {let node:String}
     var onGlobalShortcutRecording:((Bool)->Void)?
     private var languageObservers:[NSObjectProtocol]=[]
     init(){
+        if let data=try? Data(contentsOf:home.appendingPathComponent("ui-settings.json")),let root=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],root["theme"] as? String == "light"{theme="light"}
+        NSApplication.shared.appearance=NSAppearance(named:theme == "light" ? .aqua:.darkAqua)
         for name in [Localization.didChange,Notification.Name.NSSystemTimeZoneDidChange] {
             languageObservers.append(NotificationCenter.default.addObserver(forName:name,object:nil,queue:.main){[weak self] _ in
                 Task{@MainActor [weak self] in self?.languageSelection=Localization.choice;self?.languageRevision+=1}
@@ -89,6 +119,17 @@ struct ServiceSettings: Decodable {let node:String}
     }
     deinit{for observer in languageObservers{NotificationCenter.default.removeObserver(observer)}}
     func setLanguage(_ value:LanguageChoice){do{try Localization.setChoice(value)}catch{notice=L("无法保存语言设置：{0}",error.localizedDescription)}}
+    func setTheme(_ value:String){
+        guard ["light","dark"].contains(value) else{return}
+        do{
+            let url=home.appendingPathComponent("ui-settings.json")
+            var root=(try? JSONSerialization.jsonObject(with:Data(contentsOf:url))) as? [String:Any] ?? [:]
+            root["theme"]=value
+            try FileManager.default.createDirectory(at:home,withIntermediateDirectories:true)
+            try JSONSerialization.data(withJSONObject:root,options:[.sortedKeys]).write(to:url,options:.atomic)
+            theme=value;NSApplication.shared.appearance=NSAppearance(named:value == "light" ? .aqua:.darkAqua)
+        }catch{notice=L("设置保存失败：{0}",error.localizedDescription)}
+    }
     func loadGlobalShortcutSettings(){
         let url=home.appendingPathComponent("ui-settings.json")
         guard let data=try? Data(contentsOf:url),let root=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any],let saved=root["shortcut"] as? [String:Any] else{return}
@@ -195,6 +236,7 @@ struct ServiceSettings: Decodable {let node:String}
             creditsNotifier.observe(state.quotaActivation?.creditsProtection?.event,enabled:state.quotaActivation?.config.creditsNotificationsEnabled != false,stale:state.quota?.stale != false)
             if taskQueues != state.taskQueues{taskQueues=state.taskQueues}
             if queueModels != (state.queueModels ?? []){queueModels=state.queueModels ?? []}
+            if usageSummary != state.usageSummary{usageSummary=state.usageSummary}
             if chats != state.threads{chats=state.threads}
             if sidebar != state.sidebar{sidebar=state.sidebar}
             if bridgeCount != state.bridgeCount{bridgeCount=state.bridgeCount}
@@ -331,9 +373,9 @@ func phaseName(_ value:String?) -> String {
 }
 
 enum PanelStyle {
-    static let background=Color(white:0.095)
-    static let surface=Color(white:0.16)
-    static let border=Color.white.opacity(0.09)
+    static var background:Color {Color(nsColor:.windowBackgroundColor)}
+    static var surface:Color {Color(nsColor:.controlBackgroundColor)}
+    static var border:Color {Color(nsColor:.separatorColor)}
     static let blue=Color(red:0.27,green:0.50,blue:0.99)
     static let headroom=Color(white:0.55)
 }
@@ -648,6 +690,7 @@ struct ProjectChatSidebar:View {
         Button{model.selectedID=chat.id}label:{
             VStack(alignment:.leading,spacing:3){
                 Text(chat.title).font(.system(size:12,weight:.medium)).lineLimit(1).truncationMode(.middle)
+                if let usage=chat.cumulativeUsage,usage.available{Text((usage.totalTokens ?? 0).formatted()+" token · "+usage.money).font(.caption2).foregroundStyle(.secondary)}
                 HStack(spacing:10){
                     Text(model.sidebar?.projects.first(where:{$0.threadIds.contains(chat.id)})?.name ?? L("单独聊天")).lineLimit(1).truncationMode(.tail)
                     Spacer(minLength:0)
@@ -702,6 +745,7 @@ struct ContentView: View {
                 VStack(alignment:.leading,spacing:24){
                     if let chat=model.selected {
                         VStack(alignment:.leading,spacing:7){Text(chat.title).font(.system(size:20,weight:.medium)).lineLimit(2).truncationMode(.tail);Text(chat.model.map{modelDisplayName($0)} ?? L("模型将在接入后识别")).font(.callout).foregroundStyle(.secondary)}
+                        UsageTotalsView(usage:chat.cumulativeUsage)
                         budgetEditor().disabled(!model.canEditBudget)
                         HStack(alignment:.center,spacing:16){
                             VStack(alignment:.leading,spacing:4){
@@ -729,7 +773,7 @@ struct ContentView: View {
         }
         .frame(minWidth:960,minHeight:670)
         .background(PanelStyle.background)
-        .preferredColorScheme(.dark).tint(PanelStyle.blue).environment(\.locale,Localization.locale)
+        .preferredColorScheme(model.theme == "light" ? .light:.dark).tint(PanelStyle.blue).environment(\.locale,Localization.locale)
         .onChange(of:model.selectedID){_,_ in model.showQuotaAnalytics=false;model.fill()}
         .sheet(isPresented:$showControlPanel){MainControlPanelView(model:model,initialTab:controlTab,close:{showControlPanel=false})}
 
@@ -739,7 +783,7 @@ struct ContentView: View {
             HStack {
                 budgetValue(L("压缩触发"),value:model.compactK,color:PanelStyle.blue,thumb:.compact)
                 Spacer()
-                budgetValue(L("上下文窗口"),value:model.windowK,color:.white,thumb:.window)
+                budgetValue(L("上下文窗口"),value:model.windowK,color:.primary,thumb:.window)
                 Button{model.fill()}label:{Image(systemName:"arrow.counterclockwise")}.buttonStyle(.plain).foregroundStyle(.secondary).help(L("重新载入已保存预算"))
             }
             BudgetRangeSlider(window:Binding(get:{model.windowK},set:{model.setWindowK($0)}),compact:Binding(get:{model.compactK},set:{model.setCompactK($0)}),selection:$selectedThumb,maximumWindow:model.maximumWindowK,maximumCompact:model.maximumCompactK)

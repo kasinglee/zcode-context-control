@@ -21,10 +21,13 @@ struct ContextStatistics:Decodable,Sendable {
     struct Tool:Decodable,Sendable,Identifiable {let name:String;let count:Int;var id:String{name}}
     struct Unclassified:Decodable,Sendable {let tokensEstimate:Int?;let status:String;let opaqueItems:Int;let images:Int;let reasoningItems:Int;let compactionItems:Int}
     let threadId:String;let generatedAt:String;let snapshotAt:String?;let snapshotKind:String;let model:String?
-    struct CostPart:Decodable,Sendable,Identifiable {let category:String;let label:String;let tokens:Int;let usd:Double;var id:String{category}}
+    struct CostPart:Decodable,Sendable,Identifiable {let category:String;let label:String;let tokens:Int;let usd:Double?;let amount:Double?;let rate:Double?;let currency:String?;var id:String{(currency ?? "USD")+":"+category+":"+String(rate ?? -1)}}
     struct Cost:Decodable,Sendable {
         let breakdown:[CostPart]
-        struct Group:Decodable,Sendable,Identifiable {let model:String;let tier:String;let requests:Int;let usd:Double;var id:String{model+":"+tier}}
+        struct Group:Decodable,Sendable,Identifiable {let model:String;let tier:String;let requests:Int;let usd:Double;let amount:Double?;let currency:String?;var id:String{model+":"+tier}}
+        let currency:String?;let amount:Double?;let amountUSD:Double?;let notice:String?;let formula:String?;let storageNotice:String?;let scopeNote:String?
+        struct Record:Decodable,Sendable,Identifiable {let id:String;let model:String;let inputTokens:Int?;let cachedInputTokens:Int?;let outputTokens:Int?;let amount:Double?;let currency:String?}
+        let recent:[Record]?
         let usd:Double?;let upperUSD:Double?;let maxWriteSurcharge:Double;let extraWriteTokens:Int;let pricedRequests:Int;let totalRequests:Int;let unpricedRequests:Int
         let unknownTier:Int;let unknownModel:Int;let unknownUsage:Int;let unsupportedRate:Int;let longContextCount:Int;let unverifiedWriteRequests:Int
         let groups:[Group];let checkedAt:String;let source:String
@@ -99,7 +102,7 @@ struct ContextStatistics:Decodable,Sendable {
                 }else if !loading{ContentUnavailableView(L("暂无上下文统计"),systemImage:"chart.bar.xaxis",description:Text(L("这个聊天需要有本地记录。正常交互后点击刷新。")))}
             }
         }
-        .frame(maxWidth:.infinity,alignment:.leading).preferredColorScheme(.dark)
+        .frame(maxWidth:.infinity,alignment:.leading).preferredColorScheme(model.theme == "light" ? .light:.dark)
         .task(id:chatID){
             await reload(force:false)
             while !Task.isCancelled {do{try await Task.sleep(for:.seconds(10))}catch{break};if autoRefresh && !chartInteracting{await reload(force:false)}}
@@ -152,7 +155,35 @@ struct ContextSummaryView:View {
     private func metric(_ title:String,_ value:Int?)->some View {
         VStack(alignment:.leading,spacing:8){Text(title).font(.caption).foregroundStyle(.secondary);Text(amount(value)).font(.system(size:25,weight:.medium,design:.rounded)).monospacedDigit()}.frame(maxWidth:.infinity,alignment:.leading).padding(16).background(.white.opacity(0.05),in:RoundedRectangle(cornerRadius:14))
     }
-    private var costCard:some View {
+    @ViewBuilder private var costCard:some View {
+        if ["CNY","USD","MIXED"].contains(statistics.cost.currency ?? "") && statistics.cost.formula != nil {glmCostCard(statistics.cost)} else {legacyCostCard}
+    }
+    private func glmCostCard(_ cost:ContextStatistics.Cost)->some View {
+        let cny:(Double?)->String = {value in value.map{String(format:"¥%.6f",$0)} ?? "—"}
+        let cash:(Double?,String?)->String = {value,currency in value.map{String(format:currency == "USD" ? "$%.6f":"¥%.6f",$0)} ?? "—"}
+        let total=cost.currency == "USD" ? cash(cost.amountUSD,"USD") : cost.currency == "MIXED" ? cny(cost.amount)+" + "+cash(cost.amountUSD,"USD") : cny(cost.amount)
+        return VStack(alignment:.leading,spacing:10){
+            HStack{Text(L("本聊天费用 · 官方参考价")).font(.callout.weight(.medium));Spacer();Text(cost.pricedRequests>0 ? "≈ "+total : "—").font(.title2).monospacedDigit()}
+            Text(L("已估 {0}/{1} 次 · 非实际账单",cost.pricedRequests,cost.totalRequests)+" · "+(cost.currency ?? "CNY")).font(.caption).foregroundStyle(.secondary)
+            Text(L(cost.notice ?? "按智谱官方人民币牌价估算，非渠道实际账单。" )).font(.caption).foregroundStyle(.secondary)
+            HStack{ForEach(cost.breakdown){part in VStack(alignment:.leading){Text(L(part.label));Text("\(part.tokens.formatted()) tokens");Text(cash(part.amount,part.currency))}.font(.caption).monospacedDigit().frame(maxWidth:.infinity,alignment:.leading)}}
+            DisclosureGroup(L("GLM 公式与计价明细")){
+                VStack(alignment:.leading,spacing:8){
+                    Text(L(cost.formula ?? ""));Text(L(cost.storageNotice ?? ""))
+                    ForEach(cost.groups){group in HStack{Text(modelDisplayName(group.model));Spacer();Text(L("{0} 次 · {1}",group.requests,cash(group.amount,group.currency)))}}
+                    Text(L(cost.scopeNote ?? "按每次响应自己的模型计价；思考已含在输出中。仅累计本聊天完成的响应，不包含父聊天和子代理。"))
+                    if cost.unpricedRequests>0{Text(L("未计入：未知模型 {0} 次，用量缺失或异常 {1} 次",cost.unknownModel,cost.unknownUsage)).foregroundStyle(.orange)}
+                    Text(L("价格核对：{0}",cost.checkedAt));Link(L("智谱官方 API 价格"),destination:URL(string:cost.source)!)
+                }.font(.caption).foregroundStyle(.secondary).padding(.top,6)
+            }
+            DisclosureGroup(L("最近 20 条计费记录")){
+                VStack(alignment:.leading,spacing:8){ForEach(cost.recent ?? []){row in
+                    VStack(alignment:.leading){HStack{Text(modelDisplayName(row.model));Spacer();Text(cash(row.amount,row.currency))};Text(L("总输入 {0} · 缓存命中 {1} · 输出（含思考） {2}",amount(row.inputTokens),amount(row.cachedInputTokens),amount(row.outputTokens))).foregroundStyle(.secondary)}
+                }}.font(.caption).monospacedDigit().padding(.top,6)
+            }
+        }.padding(14).background(.white.opacity(0.035),in:RoundedRectangle(cornerRadius:12))
+    }
+    private var legacyCostCard:some View {
         let cost=statistics.cost
         return VStack(alignment:.leading,spacing:9){
             HStack(alignment:.firstTextBaseline){

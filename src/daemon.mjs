@@ -1,4 +1,5 @@
 import {zcodeSidebar,zcodeStatistics} from './zcode/presentation.mjs';
+import {NativeUsageLedger,compactUsage} from './zcode/usage-ledger.mjs';
 import {stopForCredits} from './credits-stop.mjs';
 import {createCreditsProtection} from './credits-protection.mjs';
 import {integrationLog} from './diagnostic-log.mjs';
@@ -67,6 +68,7 @@ export async function startDaemon() {
   process.once('exit',()=>{try{if(JSON.parse(fs.readFileSync(lockFile,'utf8')).pid===process.pid)fs.unlinkSync(lockFile);}catch{}});
   prepareEndpoint(socketPath);
   const store=new Store();await store.seedRecentMetadata();
+  const usageLedger=new NativeUsageLedger({DatabaseSync:store.DatabaseSync});usageLedger.refresh(true);
   for(const t of Object.values(store.data.threads)){t.freshUsage=false;t.usageFresh=false;t.phase='disconnected';}
   store.save();
   const bridges=new Map();const owners=new Map();
@@ -161,14 +163,14 @@ export async function startDaemon() {
   function bridgeReady(b){return !!b&&(extension.enabled()?b.contextCeiling===CONTEXT_CEILING_VERSION&&b.contextCatalogRevision===2:b.contextCeiling!==CONTEXT_CEILING_VERSION);}
   function runtimeModel(id,slug,extended){const m=store.model(slug??store.data.threads[id]?.model)||nativeDefaultModel();if(typeof extended!=='boolean'){const peers=owners.get(id)||[];extended=peers.length===1?bridges.get(peers[0])?.contextCeiling===CONTEXT_CEILING_VERSION:extension.enabled();}return extended?ceilingModel(m):m;}
   function extensionState(fix=runtimeFix.status()){return extension.status([...bridges.values()],{compatible:!!fix.originalVersion,available:!!nativeDefaultModel()});}
-  function publicThread(id,extensionStatus){const t=store.publicThread(id,owners),m=modelFor(id,t.model),peers=owners.get(id)||[];const ready=peers.length===0?!!m:peers.length===1&&bridgeReady(bridges.get(peers[0]));return {...t,responseSpeed:runningThread(t)?responseSpeeds.get(id):null,taskQueueSupported:queueSupported(id),taskQueueRestartRequired:queueRestartRequired(id),queueCanLoad:!peers.length&&queueSupported(id),policy:policyForModel(t.policy,m,{revise:false}),...(!ready&&peers.length?{phase:t.ambiguous?'connection_conflict':'extension_pending',message:t.ambiguous?'检测到多个接入进程，请完整重启 ZCode':(extensionStatus??extensionState()).message}:{}),modelMetadata:m?Object.fromEntries(['max_context_window','context_window','effective_context_window_percent','context_ceiling','context_compact_ceiling'].map(k=>[k,m[k]]).concat([['context_catalog_ready',ready]])):null};}
+  function publicThread(id,extensionStatus){const t=store.publicThread(id,owners),m=modelFor(id,t.model),peers=owners.get(id)||[];const ready=peers.length===0?!!m:peers.length===1&&bridgeReady(bridges.get(peers[0]));return {...t,cumulativeUsage:compactUsage(usageLedger.task(id)),responseSpeed:runningThread(t)?responseSpeeds.get(id):null,taskQueueSupported:queueSupported(id),taskQueueRestartRequired:queueRestartRequired(id),queueCanLoad:!peers.length&&queueSupported(id),policy:policyForModel(t.policy,m,{revise:false}),...(!ready&&peers.length?{phase:t.ambiguous?'connection_conflict':'extension_pending',message:t.ambiguous?'检测到多个接入进程，请完整重启 ZCode':(extensionStatus??extensionState()).message}:{}),modelMetadata:m?Object.fromEntries(['max_context_window','context_window','effective_context_window_percent','context_ceiling','context_compact_ceiling'].map(k=>[k,m[k]]).concat([['context_catalog_ready',ready]])):null};}
   function newChatDefaults(){return clampNewChatDefaults(store.data.newChatDefaults||(extension.enabled()?initialNewChatDefaults:nativeNewChatDefaults),defaultModel());}
   function state(){
-    store.refreshMetadata();const fix=runtimeFix.status(undefined,[...bridges.values()]),ext=extensionState(fix);
+    store.refreshMetadata();usageLedger.refresh();const fix=runtimeFix.status(undefined,[...bridges.values()]),ext=extensionState(fix);
     const threads=Object.keys(store.data.threads).map(id=>publicThread(id,ext)).filter(t=>!t.archived&&t.ephemeral!==true&&t.canAcceptDirectInput!==false&&(t.threadSource==null||t.threadSource==='user')).sort(compareThreadActivity);
     // Keep background monitoring light: speed sampling is needed only while the tray menu is visible.
     try{if(JSON.parse(fs.readFileSync(path.join(root,'ui-status.json'),'utf8')).menuWindowVisible===true)responseSpeeds.observe(threads);}catch{}
-    return {apiVersion:CONTROL_API_VERSION,provider:'zcode',capabilities:{visibleBudget:true,quotaAnalytics:false,creditBaseline:false,taskQueues:true,queueAccountSwitch:false,compactionCompensation:false,nativeCompaction:true,contextExtension:false,quotaActivation:false,accountSwitch:false},quotaActivation:quotaActivation.state(),taskQueues:taskQueueState(),queueModels:[...(store.catalog?.values()??[])].filter(m=>m.visibility!=='hidden').map(m=>({id:m.slug,name:m.display_name||m.slug,efforts:(m.supported_reasoning_levels??[]).map(e=>e.effort),defaultEffort:m.default_reasoning_level??null})),buildId,quota:accountQuotaState(),update:updater.status(),newChatDefaults:newChatDefaults(),newChatDefaultsLimits:newChatDefaultLimits(defaultModel()),newChatDefaultsPending:[...bridges.values()].some(b=>!b.newChatDefaultsVersion),version,bridgeCount:bridges.size,contextExtension:ext,compactionCompensation:compensation.status([...bridges.values()],threads),contextCeilingPending:ext.pending,runtimeFix:fix,bridges:[...bridges.values()].map(b=>({pid:b.pid,version:b.version??null,runtimeFixId:b.runtimeFixId??null})),threads,sidebar:zcodeSidebar(threads)};
+    return {apiVersion:CONTROL_API_VERSION,provider:'zcode',capabilities:{visibleBudget:true,quotaAnalytics:false,creditBaseline:false,taskQueues:true,queueAccountSwitch:false,compactionCompensation:false,nativeCompaction:true,contextExtension:false,quotaActivation:false,accountSwitch:false},quotaActivation:quotaActivation.state(),taskQueues:taskQueueState(),queueModels:[...(store.catalog?.values()??[])].filter(m=>m.visibility!=='hidden').map(m=>({id:m.slug,name:m.display_name||m.slug,efforts:(m.supported_reasoning_levels??[]).map(e=>e.effort),defaultEffort:m.default_reasoning_level??null})),buildId,quota:accountQuotaState(),update:updater.status(),newChatDefaults:newChatDefaults(),newChatDefaultsLimits:newChatDefaultLimits(defaultModel()),newChatDefaultsPending:[...bridges.values()].some(b=>!b.newChatDefaultsVersion),version,bridgeCount:bridges.size,contextExtension:ext,compactionCompensation:compensation.status([...bridges.values()],threads),contextCeilingPending:ext.pending,runtimeFix:fix,bridges:[...bridges.values()].map(b=>({pid:b.pid,version:b.version??null,runtimeFixId:b.runtimeFixId??null})),usageSummary:compactUsage(usageLedger.summary),threads,sidebar:zcodeSidebar(threads)};
   }
   async function handle(peer,op,p) {
     if(op==='ping')return {ok:true,version,buildId};
@@ -201,7 +203,7 @@ export async function startDaemon() {
       const previousPolicy=JSON.stringify(store.data.policies[p.id]??null);
       const hadOwner=b.ids.has(p.id);
       b.ids.add(p.id);rebuildOwners();
-      const allowed=['id','name','cwd','model','effort','status','ephemeral','canAcceptDirectInput','observedWindow','expectedWindow','configuredWindow','lastUsage','freshUsage','usageFresh','phase','message','turnId','revision','observedAt','forkedFromId','threadSource','automaticTask','compensation','nativeUsage'];
+      const allowed=['id','name','cwd','model','effort','status','ephemeral','canAcceptDirectInput','observedWindow','expectedWindow','configuredWindow','lastUsage','freshUsage','usageFresh','phase','message','turnId','revision','observedAt','forkedFromId','threadSource','automaticTask','compensation','nativeUsage','nativeBilling'];
       const clean=Object.fromEntries(allowed.filter(k=>Object.hasOwn(p,k)).map(k=>[k,p[k]]));
       if(!Object.hasOwn(clean,'usageFresh'))clean.usageFresh=clean.freshUsage===true;
       if(clean.threadSource!=null&&typeof clean.threadSource!=='string')delete clean.threadSource;
@@ -305,10 +307,10 @@ export async function startDaemon() {
       else if(operation==='shutdown'){if(Object.values(store.data.threads).some(t=>t.phase==='reloading'))throw Error('A budget transaction is still active');answer={ok:true};setTimeout(shutdown,100).unref();}
       else if(operation==='check-update')answer=await updater.check(true);
       else if(operation==='install-update')answer=await updater.install();
-      else if(operation==='scan'){await store.scanLocal();answer=state();}
+      else if(operation==='scan'){usageLedger.refresh(true);await store.scanLocal();answer=state();}
       else if(operation==='statistics'){
         if(!Object.hasOwn(store.data.threads,params.id))throw new Error('未找到所选聊天');
-        answer=zcodeStatistics(store.data.threads[params.id]);
+        usageLedger.refresh();answer=zcodeStatistics({...store.data.threads[params.id],ledgerUsage:usageLedger.task(params.id)});
       }
       else if(operation==='compensation'){compensation.setEnabled(params.enabled);answer=state().compactionCompensation;}
       else if(operation==='extension')answer=await handle(null,'setContextExtension',params);

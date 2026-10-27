@@ -347,7 +347,7 @@ private enum TimelinePlotKind:String {case speed,cache,events}
                     else if r.cacheStatus=="missing" || r.cacheStatus=="invalid"{Text(L("缓存数据未记录或无效，不按零计算。")).foregroundStyle(.secondary)}
                     Text(L("生成用时 {0} · 生成前间隔 {1}", r.durationMs.map{String(format:L("%.2f 秒"),$0/1000)} ?? L("未记录"), r.preGenerationGapMs.map{String(format:L("≈ %.2f 秒"),$0/1000)} ?? L("未记录")))
                     Text(L("生成前间隔来自最近输入记录到首个生成项目，含客户端等待等开销，不是精确的服务器首 token 延迟。")).foregroundStyle(.secondary)
-                    if let parts=r.costEstimate?.breakdown {ForEach(parts){part in HStack {Text(L(part.label));Spacer();Text("\(part.tokens.formatted()) tokens · \(String(format:"$%.4f",part.usd))").monospacedDigit()}}}
+                    if let parts=r.costEstimate?.breakdown {ForEach(parts){part in HStack {Text(L(part.label));Spacer();Text("\(part.tokens.formatted()) tokens · \(part.usd.map{String(format:"$%.4f",$0)} ?? "—")").monospacedDigit()}}}
                     Text(L("本次 API 估算 {0} · Standard 单价", r.costEstimate?.usd.map{String(format:"$%.4f",$0)} ?? L("未知")))
                     Text(L("推理 {0} · 缓存写入（估算） {1} · 用时 {2}", tokenLabel(r.reasoningTokens), tokenLabel(r.costEstimate?.breakdown?.first(where:{$0.category=="cache_write"})?.tokens), r.durationMs.map{String(format:L("%.2f 秒"),$0/1000)} ?? L("未记录")))
                     Text(L("窗口 {0} · 压缩阈值 {1} · 轮次 {2}", tokenLabel(r.config.contextWindow), tokenLabel(r.config.compactThreshold), r.turnId ?? L("未记录")))
