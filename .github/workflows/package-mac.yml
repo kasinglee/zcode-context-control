@@ -1,0 +1,8 @@
+name: macOS installer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    uses: ./.github/workflows/_build-desktop.yml

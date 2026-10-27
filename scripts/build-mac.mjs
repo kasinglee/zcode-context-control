@@ -1,0 +1,25 @@
+import fs from 'node:fs';
+import {createHash} from 'node:crypto';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {spawnSync} from 'node:child_process';
+
+const repo=fileURLToPath(new URL('../',import.meta.url));const out=path.join(repo,'build/ZCode Context Control.app/Contents');
+const contracts=spawnSync(process.execPath,[path.join(repo,'scripts/check-architecture.mjs')],{stdio:'inherit',windowsHide:true});
+if(contracts.status!==0)process.exit(contracts.status||1);
+const version=JSON.parse(fs.readFileSync(path.join(repo,'package.json'),'utf8')).version;
+fs.rmSync(path.dirname(out),{recursive:true,force:true});
+fs.mkdirSync(path.join(out,'MacOS'),{recursive:true});
+fs.mkdirSync(path.join(out,'Resources'),{recursive:true});
+const iconSource=path.join(repo,'macos/Assets/ContextManager.icns');
+const iconName='ContextManager-'+createHash('sha256').update(fs.readFileSync(iconSource)).digest('hex').slice(0,10);
+fs.copyFileSync(iconSource,path.join(out,'Resources',iconName+'.icns'));
+fs.copyFileSync(path.join(repo,'src/locales/en.json'),path.join(out,'Resources/localization-en.json'));
+const target=`${process.arch==='arm64'?'arm64':'x86_64'}-apple-macos14.0`;
+const result=spawnSync('xcrun',['swiftc','-parse-as-library','-O','-target',target,path.join(repo,'macos/Localization.swift'),path.join(repo,'macos/ControlAPI.swift'),path.join(repo,'macos/BudgetMath.swift'),path.join(repo,'macos/ProductVersion.swift'),path.join(repo,'macos/RefreshSchedule.swift'),path.join(repo,'macos/MaxContextFlow.swift'),path.join(repo,'macos/NewChatDefaults.swift'),path.join(repo,'macos/ContextExtension.swift'),path.join(repo,'macos/ContextDetails.swift'),path.join(repo,'macos/ContextCharts.swift'),path.join(repo,'macos/TimelineData.swift'),path.join(repo,'macos/TimelineInteraction.swift'),path.join(repo,'macos/SidebarScrollStyle.swift'),path.join(repo,'macos/GlobalShortcut.swift'),path.join(repo,'macos/ShortcutRecorder.swift'),path.join(repo,'macos/ContextControl.swift'),path.join(repo,'macos/ContextApplication.swift'),path.join(repo,'macos/ApplicationPreferences.swift'),path.join(repo,'macos/StatusItemController.swift'),path.join(repo,'macos/MainWindowController.swift'),path.join(repo,'macos/QuotaStatusIcon.swift'),path.join(repo,'macos/ContextMenu.swift'),path.join(repo,'macos/AccountQuota.swift'),path.join(repo,'macos/QuotaAnalytics.swift'),path.join(repo,'macos/QuotaSidebar.swift'),path.join(repo,'macos/MainControlPanel.swift'),path.join(repo,'macos/TaskQueues.swift'),path.join(repo,'macos/CloudSync.swift'),path.join(repo,'macos/AccountSwitcher.swift'),path.join(repo,'macos/QuotaActivation.swift'),path.join(repo,'macos/QuotaResetNotifications.swift'),path.join(repo,'macos/MenuBudget.swift'),path.join(repo,'macos/ContextMenuPanel.swift'),path.join(repo,'macos/MenuDragUpdates.swift'),path.join(repo,'macos/MenuHoverSelection.swift'),'-o',path.join(out,'MacOS/ContextControl'),'-framework','SwiftUI','-framework','AppKit','-framework','Carbon','-framework','UserNotifications'],{stdio:'inherit'});
+if(result.status!==0)process.exit(result.status||1);
+const plist=`<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleName</key><string>Context Manager</string><key>CFBundleDisplayName</key><string>Context Manager</string><key>CFBundleIdentifier</key><string>io.github.zcode-context-control</string><key>CFBundleExecutable</key><string>ContextControl</string><key>CFBundleIconFile</key><string>${iconName}</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${version}</string><key>CFBundleLocalizations</key><array><string>en</string><string>zh-Hans</string></array><key>NSPrincipalClass</key><string>ContextControlApplication</string><key>LSUIElement</key><true/><key>LSMinimumSystemVersion</key><string>14.0</string><key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict></dict></plist>`;
+fs.writeFileSync(path.join(out,'Info.plist'),plist);
+const signed=spawnSync('/usr/bin/codesign',['--force','--sign','-',path.dirname(out)],{stdio:'inherit'});
+if(signed.status!==0)process.exit(signed.status||1);
+console.log('Built and locally signed native macOS control panel.');

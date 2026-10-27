@@ -1,0 +1,49 @@
+{
+  "name": "zcode-context-control",
+  "version": "0.27.12",
+  "private": true,
+  "type": "module",
+  "description": "ZCode desktop context control and task queues, native macOS and Windows",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "test": "node --test test/zcode-*.test.mjs test/budget.test.mjs test/policy.test.mjs test/core-contract.test.mjs test/task-queues.test.mjs test/queue-retry.test.mjs test/queue-history.test.mjs test/quota-outlook.test.mjs",
+    "test:integration": "node --test test/integration.test.mjs",
+    "build:mac": "node scripts/build-mac.mjs",
+    "build:win": "node scripts/build-win.mjs",
+    "build:win:dir": "node scripts/build-win.mjs --directory-only",
+    "package:win": "node scripts/package-win.mjs",
+    "package:win:update": "node scripts/package-win.mjs --update-only",
+    "dev:win": "node scripts/dev-win.mjs",
+    "test:win:ui-smoke": "node scripts/dev-win.mjs --demo --smoke-test",
+    "test:win:package": "node scripts/test-win-package.mjs",
+    "test:win:setup": "node scripts/test-win-package.mjs --standalone",
+    "test:win:update": "node scripts/test-win-update.mjs",
+    "install:win": "node scripts/install-win.mjs",
+    "uninstall:win": "node scripts/install-win.mjs --uninstall",
+    "install:local": "node scripts/install-current.mjs",
+    "uninstall:local": "node scripts/install-current.mjs --uninstall",
+    "doctor": "node src/zcode/doctor.mjs",
+    "start": "node src/zcode/launch.mjs",
+    "test:stress": "node scripts/stress-app.mjs",
+    "package:mac": "node scripts/package-mac.mjs",
+    "test:distribution": "node --test test/distribution.test.mjs",
+    "build": "node scripts/build-current.mjs",
+    "package": "node scripts/build-current.mjs --package",
+    "generate:contracts": "node scripts/generate-contracts.mjs",
+    "check:architecture": "node scripts/check-architecture.mjs",
+    "test:contracts": "node --test test/core-contract.test.mjs",
+    "test:ci": "node --test test/zcode-*.test.mjs test/budget.test.mjs test/policy.test.mjs test/core-contract.test.mjs test/task-queues.test.mjs test/queue-retry.test.mjs test/queue-history.test.mjs test/quota-outlook.test.mjs",
+    "test:zcode": "node --test test/zcode-*.test.mjs",
+    "test:upstream": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "js-tiktoken": "1.0.21"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "44.9.0",
+    "rcedit": "5.0.2"
+  }
+}

@@ -1,0 +1,121 @@
+> 上游 Codex 项目设计／历史文档。ZCode 接入状态以 README.zh-CN.md 和 docs/ZCODE_ADAPTATION.md 为准。
+
+# 架构与 Codex 接入
+
+[English](en/ARCHITECTURE.md) | **简体中文** · [首页](../README.zh-CN.md)
+
+## 代码边界（0.19.6）
+
+`src/core/` 保存不依赖系统或界面的预算、继承、状态迁移和更新选择规则。`src/contracts/` 定义控制接口，Mac 的路由由同一份规范生成。`src/platform/` 处理系统路径、进程、启动登记和旧版本回收；控制服务、桥接和存储把这些模块组合起来。`macos/` 和 `desktop/` 分别负责界面。
+
+界面可自行预览拖动效果，最终提交使用可见容量 `budget.usableWindow`，由服务端统一反算底层窗口并执行预检。旧客户端仍可提交 `policy.window`；新界面通过 `capabilities.visibleBudget` 判断接口能力。生成文件检查和跨语言案例测试防止两套预览算法出现偏差。
+
+两个平台的核心行为约定见 [功能一致性](FEATURE_PARITY.md)，分支与发布规则见 [协作指南](../CONTRIBUTING.md)。
+
+## 所有权
+
+Codex 为每个线程持有自己的 SessionConfiguration 和 ModelInfoOverrides。模型目录等服务可以共享，但窗口覆盖值由聊天各自持有。仅修改 config.toml 不会更新现有会话捕获的窗口参数。
+
+本项目利用已在真实运行时验证的路径：目标聊天空闲且没有订阅者时，带配置覆盖的 thread/resume 可以重新构建该聊天。
+
+```mermaid
+flowchart LR
+  Panel[Mac 原生面板 / Windows 界面] -->|仅本机认证接口| Controller[控制服务与逐聊天策略]
+  Controller -->|Unix socket / 认证 named pipe| Bridge[桌面连接桥接]
+  Desktop[原有 Codex 桌面端] <-->|原有 JSON-RPC| Bridge
+  Bridge <-->|stdio| Runtime[原有 Codex app-server]
+  Runtime --> Hook[Stop hook]
+  Hook --> Controller
+```
+
+## 为什么需要在启动时接入
+
+桌面端通过自己的连接订阅聊天。单独启动一个旁路客户端，不能取消桌面端的订阅，也就不能利用这条重新加载路径。
+
+0.2 通过当前用户 GUI 登录会话的 `CODEX_CLI_PATH`，让原来的 Codex 图标启动时取得透传包装器路径。登录登记任务只执行一次 `launchctl setenv` 后退出，不启动或监督 Codex。桌面端由 macOS 正常打开，包装器再按需启动控制服务。设置面板不参与客户端的启动链，可以关闭。
+
+0.4 在第一条桌面连接注册时，通过 Launch Services 后台启动菜单栏界面。界面使用原生 NSStatusItem，设置窗口按需创建；已有界面进程时不重复打开。进程检测使用规范化可执行文件路径，避免 Launch Services 的路径转换和 argv 改写导致重复入口。关闭设置窗口后，菜单栏入口保留。界面没有麦克风或辅助功能权限请求。
+
+0.4.1 保留原生 Mach-O 作为 `CFBundleExecutable`，并对自己的完整应用包进行本地 ad-hoc 签名。旧安装中的 shell 应用入口已移除；原生程序直接启动本地服务。这样 macOS 可以以独立的 Codex Context Control 身份管理菜单栏项目。这里的本地签名不是 Apple 公证或 Developer ID 发布签名。升级先等待旧界面退出，再等待 Launch Services 接受新启动请求，避免短命安装进程退出时丢失启动请求。原有 Codex 应用包保持不动。
+
+菜单栏生命周期由 macOS 的 `StatusItemController`、Windows 的 `tray-controller.mjs` 独立持有；主窗口关闭、服务请求失败和快捷键录制不释放入口。启动直接绘制静态额度图标，未知、过期及耗尽状态保留轮廓。macOS 使用稳定的 `autosaveName`，在唤醒或重新打开时检查图像；Windows 在托盘实例被销毁后重新创建并绑定事件。刷新完成后退出的回调不能重新创建已停止的入口。
+
+诊断区分入口创建、图像就绪与用户实际可见。`menuReady` / `imageReady` 只证明应用侧的资源状态；`menuBarStatus.ready` 在运行中返回 `null`，`visibilityEvidence` 为 `unverified`。macOS 的系统菜单栏隐藏设置、Windows 的通知区折叠都不能由本地窗口坐标确认。排查时需结合系统日志或用户确认，不能把进程存活当作显示成功。
+
+
+这是一项当前用户会话级环境设置，其他读取该变量的 GUI 程序也能看见。包装器根据直接父进程的应用路径识别 Codex 桌面，并选择该桌面包内的运行时；其他调用不启用预算桥接，仅透传安装时配置的运行时。它不是对任意 IDE 或其他宿主的完整兼容承诺。已有其他自定义值时拒绝覆盖；卸载仅在值仍属于本项目时恢复原值，保留之后的外部修改。
+
+包装器保持前端 JSON-RPC 的请求、响应、通知和反向工具调用。内部控制请求使用独立随机 ID，不返回前端。`--version`、schema 工具和其他命令透传。辅助文件通过安装目录中的符号链接保持可发现。
+
+安装程序不替换签名应用、不改用户的模型提供方与登录凭据、不编辑系统隐私权限。旧版让 Node 直接启动桌面可影响 macOS 权限归属；新方案保留系统正常的应用启动链。是否恢复到原来麦克风权限，仍需在真实桌面正常重开后验证，测试程序不会请求麦克风。
+
+`CODEX_CLI_PATH` 的桌面使用属于本地实现接入点，不应当视为稳定的第三方插件 API。每个新运行时版本需要重新验证。
+
+## 应用事务
+
+1. 规范化输入和预检，使用模型目录中的最大值与可用比例。
+2. 活跃轮次排队；空闲时，仅锁住目标聊天的新输入和设置请求，其他聊天继续转发。
+3. 读取当前聊天设置快照。
+4. 取消本连接的订阅。
+5. 用相同 threadId 恢复，合并新的窗口、压缩阈值和 total scope。
+6. 恢复实际模型、权限、推理设置、协作模式和插件禁用列表，并保留原有开发者/基础指令覆盖。动态工具由 Codex 的持久化恢复机制保留。
+7. 放行目标聊天队列，状态标为等待下一轮确认。
+8. 只有 thread/tokenUsage/updated 报告的窗口与预期相符，才标记窗口已确认。
+
+模型切换可能清空桥接的预期窗口。若新的用量记录已经到达，且对应同一已应用预算版本和底层窗口，控制服务按新模型元数据补齐预期值并比较读回；不会用旧记录、旧预算版本或未知模型信息完成确认。这里确认的仍然只有窗口，压缩阈值没有独立读回字段。
+
+失败会尝试重新加入原聊天。无法无损表示的沙盒策略、临时聊天或父代理管理的聊天在取消订阅之前拒绝。异常状态不会被当作已生效。
+
+这里的“热调整”是轮次之间重新加载单个聊天。已经发送的请求不会被追改。
+
+## 预检
+
+当前版本只支持 total scope：
+
+```
+requested_usable_window = 用户输入的实际可用容量
+raw_window = ceil(requested_usable_window × 100 / effective_context_window_percent)
+usable_window = floor(raw_window × effective_context_window_percent / 100)
+requested_compact = floor(usable_window × compression_percent / 100)
+native_compact_maximum = floor(raw_window × 90 / 100)
+```
+
+底层窗口不得超过模型目录上限，按比例算出的阈值不得超过原生压缩上限；新界面和 `set-usable` 在提交前拒绝超限比例。可用比例在 1–100 的整数范围时，反算后能精确读回用户输入的整数容量。JS 使用整数/BigInt 运算，Swift 使用有界整数运算，并用相同案例对照验证。
+
+控制协议和旧预算文件仍以底层 `window` / 绝对 `compact` 保存，旧 `set` 命令保持兼容。新界面根据这些值显示可用容量与压缩比例；不自动重写旧预算。原生预检仍保留旧调用路径的上限检查和警告。
+
+将必须保留量、下一轮预留、最近请求用量分别与容量及压缩阈值比较。用量或模型元数据未知时，等待观测；不会把未知值当作零。
+
+最近请求用量来自运行时 last usage，不使用累计 usage。它不包含所有可能的内核估算和下一步内容，所以属于保守设计中的一个观测量，不能证明任意后续操作均不会触发压缩。手动保留下限是用户指定的约束，不是对加密压缩状态的测量。
+
+控制服务可以独立更新。集成测试在模型请求仍生成时重新启动控制服务，确认桥接自动重连、原运行时和聊天继续工作，已保存的预算保持。实际更新先确认没有预算重新加载事务，再重启本项目服务，不关闭 Codex。
+
+## 保存内容
+
+控制服务只持久保存聊天 ID、标题/目录、模型、状态、窗口、用量统计和预算。开发者指令、工具定义等为恢复设置所需的信息仅在桥接进程内存中保留，不写入控制服务状态文件。
+
+## 参考
+
+- [官方 App Server 协议](https://learn.chatgpt.com/docs/app-server)
+- [官方 Hooks](https://learn.chatgpt.com/docs/hooks)
+- [0.160.0 的会话设置](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/core/src/session/step_settings.rs)
+- [0.160.0 的运行中聊天恢复逻辑](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/app-server/src/request_processors/thread_processor.rs)
+- [0.160.0 的窗口与阈值计算](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/protocol/src/openai_models.rs)
+
+## 连续预算更新（0.5.1）
+
+预算修订号单调递增，旧通知的回包不能覆盖已接收的新预算，重复投递不会重置应用状态。关闭自动应用也会推进修订号，避免晚到的旧回包重新启用策略。
+
+`usageFresh` 标识最近用量是否仍能用于容量预检；`freshUsage` 继续用于窗口读回确认。仅重新加载相同历史会清除窗口确认，不清除仍有效的用量。新的输入、轮次开始、模型变化或请求压缩会使原用量失效。兼容旧桥接时，从旧的 `freshUsage` 推导用量有效性。
+
+一次重载期间到达的新预算在释放输入队列前继续处理；空闲时接收的新预算也不需要通过额外模型请求重新取得相同历史的用量。新的 turn/start 先检查待应用预算。所有版本仍逐次通过容量与预留预检；需要压缩的设置保持阻止状态。
+
+## Fork 快照继承（0.5.2）
+
+普通 `thread/fork` 转发前，从控制服务查询父对话的持久预算，并拍下副本。将三个上下文配置字段合入创建请求，保留其他参数；因此新分支无需先以全局窗口运行一轮。原生 fork 成功后，桥接为返回的新 ID 建立独立 revision 1，控制服务只在该 ID 尚无预算时持久保存副本，并记录 `inheritedFrom` / `inheritedFromRevision`。失败的 fork 不生成预算，之后的回报或重连不覆盖分支自己的修改。
+
+官方接口文档确认 fork 复制历史、生成新 ID，并在可用时返回 forkedFromId：[Codex App Server](https://learn.chatgpt.com/docs/app-server)。配置注入能力另外以本机 0.160.0 生成的 schema 核对，并通过 0.159.2 / 0.160.0 的本地模拟服务集成测试。预算继承是本项目增加的行为。临时会话、path 来源和父代理管理的子会话仍不纳入持久控制范围。
+
+启动控制服务时检查版本。已有服务较旧时，核对其 PID 与本项目 daemon 的可执行脚本路径，再替换控制服务；同版且 buildId 相同，或更高版本的服务复用。该操作不终止 Codex 内核。桥接本身仍须正常重开 Codex 才能换成新版；`loadedBridgeVersions` 用于区分安装版本与已加载版本。
+
+0.25.2 的 Mac 界面使用稳定产品标识 `io.github.codex-context-control`，与 Windows 产品标识一致。旧 `io.github.codex-context-control.panel` 的原生偏好迁移一次，新标识下已经存在的选择优先。安装路径、Application Support 数据目录及自动更新协议保持不变。通过 `NSApplicationMain` 和显式 principal class 完成标准 AppKit 初始化，不依赖私有启动或菜单栏 API。

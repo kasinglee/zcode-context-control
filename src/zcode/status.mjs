@@ -1,0 +1,7 @@
+export const unavailable='ZCode 尚未提供经过验证的账户额度接口；原有功能保留，当前不可用。';
+const unsupported=()=>{throw Error(unavailable);};
+export function createQuotaManager(){const state=()=>({accounts:[],buckets:[],updatedAt:null,loading:false,stale:true,error:unavailable,accountScope:null,creditBaselines:{}});return {state,refresh:async()=>state(),suspend:async()=>()=>{},invalidate(){},removeAccounts(){},resetCredits:unsupported};}
+export function createAccountSwitcher(){const state=()=>({profiles:[],activeId:null,busy:false,restartRequired:false,job:null});return {state,command:async p=>p.action==='status'?state():unsupported(),inspect:unsupported,opened(){},close(){}};}
+export function createRuntimeFixManager(){const status=()=>({enabled:false,available:false,compatible:false,baseVersion:'ZCode',originalVersion:null,activeCount:0,pending:false,message:'使用 ZCode 原生协议；不应用 Codex 的历史推理补丁。'});return {status,setEnabled:()=>{throw Error('此补丁只适用于原始 Codex 运行时。');}};}
+export function createContextExtensionManager(){const status=bridges=>({enabled:false,effective:false,pending:false,activeCount:0,connectedCount:bridges.length,compatible:false,available:false,message:'ZCode 使用模型原生上下文上限；不强制宣称支持 920K。'});return {enabled:()=>false,status,setEnabled(value){if(value)throw Error('尚未验证 ZCode 模型支持扩展上下文。');}};}
+export function createUpdateManager({current}){const status=()=>({currentVersion:current,available:false,version:null,phase:'disabled',checkedAt:null,error:'ZCode 适配版尚未配置发布源，已禁用上游自动更新。'});return {status,check:async()=>status(),install:async()=>{throw Error('尚未配置 ZCode 适配版发布源。');}};}

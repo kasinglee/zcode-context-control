@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "routes": {
+    "account-switch": {
+      "method": "POST",
+      "path": "/accounts"
+    },
+    "cloud-sync": {
+      "method": "POST",
+      "path": "/cloud-sync"
+    },
+    "state": {
+      "method": "GET",
+      "path": "/state"
+    },
+    "statistics": {
+      "method": "POST",
+      "path": "/context-stats"
+    },
+    "preflight": {
+      "method": "POST",
+      "path": "/preflight"
+    },
+    "policy": {
+      "method": "POST",
+      "path": "/policy"
+    },
+    "clear": {
+      "method": "POST",
+      "path": "/clear"
+    },
+    "compact": {
+      "method": "POST",
+      "path": "/compact"
+    },
+    "defaults": {
+      "method": "POST",
+      "path": "/new-chat-defaults"
+    },
+    "extension": {
+      "method": "POST",
+      "path": "/context-extension"
+    },
+    "scan": {
+      "method": "POST",
+      "path": "/scan"
+    },
+    "quota-refresh": {
+      "method": "POST",
+      "path": "/quota"
+    },
+    "check-update": {
+      "method": "POST",
+      "path": "/updates/check"
+    },
+    "install-update": {
+      "method": "POST",
+      "path": "/updates/install"
+    },
+    "runtime-fix": {
+      "method": "POST",
+      "path": "/runtime-fix"
+    },
+    "shutdown": {
+      "method": "POST",
+      "path": "/shutdown"
+    },
+    "quota-analytics": {
+      "method": "POST",
+      "path": "/quota/analytics"
+    },
+    "quota-credit-baseline": {
+      "method": "POST",
+      "path": "/quota/credits/reset"
+    },
+    "task-queue": {
+      "method": "POST",
+      "path": "/task-queue"
+    },
+    "compensation": {
+      "method": "POST",
+      "path": "/compaction-compensation"
+    },
+    "quota-activation": {
+      "method": "POST",
+      "path": "/quota/activation"
+    }
+  }
+}

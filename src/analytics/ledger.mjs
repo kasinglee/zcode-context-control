@@ -1,0 +1,297 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
+import {canonicalLocalPath, pathInside} from '../local-path.mjs';
+import {DAY} from '../core/quota-statistics.mjs';
+import {numericRecords,mergeRequests} from './sync-records.mjs';
+
+const RETENTION = 366 * DAY;
+const MAX_RECORD = 1024 * 1024;
+const text = (value, max = 160) => typeof value === 'string' && value.length <= max && !/[\r\n]/.test(value) ? value : null;
+const count = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+function quotaWindow(value) {
+  if (!value || !Number.isFinite(value.usedPercent ?? value.used_percent)) return null;
+  return {used: value.usedPercent ?? value.used_percent, minutes: value.windowDurationMins ?? value.window_minutes, reset: value.resetsAt ?? value.resets_at};
+}
+export function projectQuota(bucket, {at, scope = 'history', bucketId = 'codex'} = {}) {
+  const windows = [quotaWindow(bucket?.primary), quotaWindow(bucket?.secondary)].filter(Boolean);
+  const weekly = windows.find(w => w.minutes === 10080), five = windows.find(w => w.minutes === 300);
+
+  const valid = w => w && w.used >= 0 && w.used <= 100 && Number.isSafeInteger(w.reset) && w.reset > 0 && w.reset < 8640000000000;
+  const wk = valid(weekly) ? weekly : null, fh = valid(five) ? five : null;
+  const raw=bucket?.creditBalance ?? bucket?.credits?.balance;
+  const credits=bucket?.unlimitedCredits===true||bucket?.credits?.unlimited===true?null:typeof raw==='number'||typeof raw==='string'&&/^\d+(?:\.\d+)?$/.test(raw.trim())?Number(raw):null;
+  const balance=Number.isFinite(credits)&&credits>=0?credits:null;
+  if (!wk && !fh && balance==null) return null;
+  return {at, scope, bucket: text(bucketId) || 'codex', weeklyUsed: wk?.used ?? null, weeklyReset: wk?.reset ?? null,
+    fiveUsed: fh?.used ?? null, fiveReset: fh?.reset ?? null,credits:balance};
+}
+const snapshotId = value => JSON.stringify([value.scope,value.bucket,Math.floor(value.at/60000),value.weeklyReset,value.fiveReset,value.weeklyUsed,value.fiveUsed,value.credits??null]);
+function nativeRows(home) {
+  let db;
+  try {
+    const file = fs.readdirSync(home).filter(n => /^state_\d+\.sqlite$/.test(n)).sort((a, b) => Number(b.match(/\d+/)[0]) - Number(a.match(/\d+/)[0]))[0];
+    if (!file) return [];
+    db = new DatabaseSync(path.join(home, file), {readOnly: true});
+    const cols = new Set(db.prepare('PRAGMA table_info(threads)').all().map(p => p.name));
+    if (!cols.has('id') || !cols.has('rollout_path')) return [];
+    const fields = ['id', 'rollout_path', 'cwd', 'name'].filter(f => cols.has(f));
+    const order = cols.has('updated_at') ? ' ORDER BY updated_at DESC' : '';
+    return db.prepare('SELECT ' + fields.join(',') + ' FROM threads' + order + ' LIMIT 10000').all();
+  } catch {return [];} finally {db?.close();}
+}
+
+// Dedicated numeric ledger. No messages, prompt text, tool arguments, account
+// emails, auth tokens or original history rewrites are stored here.
+export class QuotaLedger {
+  constructor({file, home, now = Date.now} = {}) {
+    this.file = file;this.home = home;this.now = now;this.progress = {files: 0, pending: 0, unreadable: 0, bytesRead: 0};
+    fs.mkdirSync(path.dirname(file), {recursive: true, mode: 0o700});
+    this.db = new DatabaseSync(file);fs.chmodSync(file, 0o600);
+    this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, source TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS requests_time ON requests(at);
+      CREATE INDEX IF NOT EXISTS requests_source ON requests(source);
+      CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, source TEXT NOT NULL, scope TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS snapshots_time ON snapshots(at);
+      CREATE INDEX IF NOT EXISTS snapshots_source ON snapshots(source);`);
+    this.db.exec('CREATE TABLE IF NOT EXISTS cloud_shards (id TEXT PRIMARY KEY, account TEXT NOT NULL, scope TEXT NOT NULL, data TEXT NOT NULL)');
+    const schema = this.db.prepare('SELECT value FROM meta WHERE key=?').get('schema');
+    if (schema && schema.value !== '1') {this.db.close();throw Error('Unsupported quota ledger version');}
+    this.db.prepare('INSERT OR IGNORE INTO meta VALUES (?,?)').run('schema', '1');
+    // Revisit existing files once to backfill the longer cost history and write counts.
+    if(this.metadata('costHistoryVersion')!==1){this.db.exec('DELETE FROM sources');this.setMetadata('costHistoryVersion',1);}
+    if(this.metadata('quotaSamplingVersion')!==2){
+      // Rekey saved observations before rescanning, so backfilled JSONL rows
+      // enrich history without duplicating the previous minute-level reading.
+      this.db.exec('BEGIN');
+      try{
+        const insert=this.db.prepare('INSERT OR REPLACE INTO snapshots VALUES (?,?,?,?,?)'),remove=this.db.prepare('DELETE FROM snapshots WHERE id=?');
+        for(const row of this.db.prepare('SELECT * FROM snapshots').all()){
+          const value=JSON.parse(row.data),key=snapshotId(value);
+          if(key!==row.id){insert.run(key,row.source,row.scope,row.at,row.data);remove.run(row.id);}
+        }
+        this.db.exec('DELETE FROM sources');this.setMetadata('quotaSamplingVersion',2);this.db.exec('COMMIT');
+      }catch(error){this.db.exec('ROLLBACK');throw error;}
+    }
+    this.putSource = this.db.prepare('INSERT OR REPLACE INTO sources VALUES (?,?)');
+    this.putRequest = this.db.prepare("INSERT INTO requests VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data WHERE requests.source=excluded.source AND json_extract(requests.data,'$.written') IS NULL AND json_extract(excluded.data,'$.written') IS NOT NULL");
+    this.putQuota = this.db.prepare('INSERT INTO snapshots VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET at=excluded.at,data=excluded.data WHERE excluded.at>=snapshots.at');
+  }
+  metadata(key) {const row = this.db.prepare('SELECT value FROM meta WHERE key=?').get(key);return row ? JSON.parse(row.value) : null;}
+  setMetadata(key, value) {this.db.prepare('INSERT OR REPLACE INTO meta VALUES (?,?)').run(key, JSON.stringify(value));}
+  snapshot(value, source = 'live') {
+    if (!value || !Number.isFinite(value.at) || value.at < this.now() - RETENTION || value.at > this.now() + 60000) return;
+    if(value.at<=(this.metadata('deletedAccountScopes')?.[value.scope]??0))return;
+    // Preserve every distinct observed reading within a minute. Only identical
+    // readings coalesce; do not overwrite a 1 pp change or a credit change.
+    const id = snapshotId(value);
+    this.putQuota.run(id, source, value.scope, value.at, JSON.stringify(value));
+  }
+  recordLive({scope, buckets, at,accountGroup,identity,label}) {
+    if (!/^(account:[a-f0-9]{32}|unidentified)$/.test(scope)) return;
+    if(this.metadata('currentScope')!==scope){
+      this.setMetadata('accountSince',at);
+      this.setMetadata('accountPeriods',[...(this.metadata('accountPeriods')||[]),{at,scope}].slice(-10000));
+    }
+    if(typeof accountGroup==='string'&&/^[a-f0-9]{32}$/.test(accountGroup))this.setMetadata('accountGroups',{...(this.metadata('accountGroups')||{}),[scope]:accountGroup});
+    if(accountGroup&&typeof identity==='string'&&identity.length<=4096){
+      const profiles=this.metadata('accountProfiles')||{};
+      profiles[accountGroup]={...profiles[accountGroup],identity,label:text(label,160)||scope.slice(-8),...(buckets?.length?{quota:{scope,buckets,updatedAt:at}}:{})};
+      this.setMetadata('accountProfiles',profiles);
+    }
+    for (const bucket of buckets || []) this.snapshot(projectQuota(bucket, {scope, at, bucketId: bucket.id}));
+    this.setMetadata('currentScope', scope);this.prune();
+  }
+  consume(event, source, offset) {
+    const at = Date.parse(event.timestamp), p = event.payload || {};
+    if (event.type === 'turn_context' && text(p.model)) source.model = p.model;
+    if (event.type === 'event_msg' && p.type === 'thread_settings_applied' && text(p.thread_settings?.model)) source.model = p.thread_settings.model;
+    if (!Number.isFinite(at) || at < this.now() - RETENTION || at > this.now() + 60000) return;
+    if (event.type === 'token_usage_record') {
+      // Copied fork history must not become newly billed child requests.
+      if (p.thread_id && p.thread_id !== source.id) return;
+      const usage = p.usage || {}, input = count(usage.input_tokens), output = count(usage.output_tokens);
+      if (input == null || output == null) return;
+      const id = text(p.response_id, 240);
+      // A response ID is required for deduplication across rollouts and rescans.
+      if (!id) {source.unidentifiedRequests = (source.unidentifiedRequests || 0) + 1;return;}
+      const rawCached = count(usage.cached_input_tokens), cached = rawCached != null && rawCached <= input ? rawCached : null;
+      const record = {id, at, thread: source.id, model: source.model || null, project: source.project, name: source.name,
+        input, output, cached, written:count(usage.cache_write_input_tokens),scope:this.scopeAt(at)};
+      if(at<=(this.metadata('deletedAccountScopes')?.[record.scope]??0))return;
+      this.putRequest.run(id, source.id, at, JSON.stringify(record));
+    }
+    if (event.type === 'event_msg' && p.type === 'token_count') {
+      const limits = p.rate_limits;
+      if (limits) this.snapshot(projectQuota(limits, {at, bucketId: limits.limit_id}), source.id);
+    }
+  }
+  scan({rows = null, budget = 16 * 1024 * 1024} = {}) {
+    if(!fs.existsSync(this.home))return this.progress;
+    const list = rows || nativeRows(this.home), root = canonicalLocalPath(this.home), cutoff = this.now() - RETENTION;
+    const known = new Map(this.db.prepare('SELECT id,data FROM sources').all().map(p => [p.id, JSON.parse(p.data)]));
+    let remaining = budget, files = 0, pending = 0, unreadable = 0, bytesRead = 0;
+    // Resume the first incomplete source before starting another large file.
+    list.sort((a, b) => Number(known.get(b.id)?.pending || false) - Number(known.get(a.id)?.pending || false));
+    for (const row of list) {
+      if (!text(row.id, 180) || !row.rollout_path) continue;
+      let file, stat;
+      try {file = canonicalLocalPath(row.rollout_path);if (!pathInside(root, file) || !file.endsWith('.jsonl')) continue;stat = fs.statSync(file);if (!stat.isFile() || stat.mtimeMs < cutoff) continue;} catch {unreadable++;continue;}
+      files++;
+      const old = known.get(row.id), fingerprint = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+      if (old?.fingerprint === fingerprint && !old.pending) continue;
+      if (remaining <= 0) {pending++;continue;}
+      const append = old?.file === file && old.dev === stat.dev && old.ino === stat.ino && stat.size >= old.size && (old.pending || stat.size > old.size);
+      const source = append ? {...old} : {id: row.id, file, dev: stat.dev, ino: stat.ino, offset: 0, model: null, dropping: false};
+      source.name = text(row.name, 120);source.project = text(path.basename(row.cwd || ''), 160) || '未分类';
+      let handle;
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        // Rollbacks and compaction do not refund already observed consumption.
+        // Restart the file cursor after replacement, but retain the numeric ledger.
+        handle = fs.openSync(file, 'r');let waiting = false;
+        while (source.offset < stat.size && remaining > 0) {
+          const buffer = Buffer.alloc(Math.min(MAX_RECORD, stat.size - source.offset));
+          const length = fs.readSync(handle, buffer, 0, buffer.length, source.offset);
+          if (!length) {waiting = true;break;}
+          const block = buffer.subarray(0, length);remaining -= length;bytesRead += length;
+          let begin = 0;
+          if (source.dropping) {const end = block.indexOf(10);if (end < 0) {source.offset += length;continue;}begin = end + 1;source.dropping = false;}
+          let end;
+          while ((end = block.indexOf(10, begin)) >= 0) {
+            const line = block.subarray(begin, end);
+            // Most history consists of messages. Only parse the narrow event
+            // families needed by the ledger; raw text never leaves this scope.
+            const prefix = line.subarray(0, 320).toString('utf8');
+            if (/"type"\s*:\s*"(turn_context|token_usage_record|event_msg)"/.test(prefix)) {
+              try {this.consume(JSON.parse(line.toString('utf8')), source, source.offset + begin);} catch {source.invalidRecords = (source.invalidRecords || 0) + 1;}
+            }
+            begin = end + 1;
+          }
+          if (begin) source.offset += begin;
+          else if (length === MAX_RECORD) {source.offset += length;source.dropping = true;}
+          else {waiting = true;break;}
+        }
+        source.size = stat.size;source.fingerprint = fingerprint;source.pending = !waiting && source.offset < stat.size;
+        if (source.pending) pending++;
+        this.putSource.run(row.id, JSON.stringify(source));this.db.exec('COMMIT');
+      } catch {this.db.exec('ROLLBACK');unreadable++;} finally {if (handle != null) fs.closeSync(handle);}
+    }
+    this.progress = {files, pending, unreadable, bytesRead};this.setMetadata('progress', this.progress);this.prune();return this.progress;
+  }
+  prune() {
+    if (this.lastPrune && this.now() - this.lastPrune < HOUR) return;
+    this.lastPrune = this.now();const cutoff = this.now() - RETENTION;
+    this.db.prepare('DELETE FROM requests WHERE at<?').run(cutoff);this.db.prepare('DELETE FROM snapshots WHERE at<?').run(cutoff);
+    for (const table of ['requests', 'snapshots']) this.db.exec(`DELETE FROM ${table} WHERE id IN (SELECT id FROM ${table} ORDER BY at DESC LIMIT -1 OFFSET 250000)`);
+    this.db.exec('PRAGMA wal_checkpoint(PASSIVE)');
+  }
+  scopeAt(at){
+    const periods=this.metadata('accountPeriods')||[];
+    for(let i=periods.length-1;i>=0;i--)if(at>=periods[i].at)return periods[i].scope;
+    return at>=this.metadata('accountSince')&&this.metadata('accountSince')?this.metadata('currentScope'):null;
+  }
+  syncProfiles(){
+    const profiles=this.metadata('accountProfiles')||{},groups=this.metadata('accountGroups')||{},current=this.metadata('currentScope');
+    return Object.entries(profiles).map(([group,p])=>{
+      const scopes=Object.keys(groups).filter(s=>groups[s]===group);let quota=p.quota;
+      if(!quota&&scopes.length){
+        const rows=this.db.prepare('SELECT data FROM snapshots WHERE scope IN ('+scopes.map(()=>'?').join(',')+') ORDER BY at DESC').all(...scopes).map(r=>JSON.parse(r.data));
+        const latest=new Map();for(const row of rows)if(!latest.has(row.bucket))latest.set(row.bucket,row);
+        if(rows.length){const window=(used,reset,minutes)=>used==null?null:{usedPercent:used,remainingPercent:100-used,resetsAt:reset,windowDurationMins:minutes};quota={scope:rows[0].scope,updatedAt:rows[0].at,buckets:[...latest.values()].map(r=>({id:r.bucket,name:r.bucket,primary:window(r.fiveUsed,r.fiveReset,300),secondary:window(r.weeklyUsed,r.weeklyReset,10080),creditBalance:r.credits==null?null:String(r.credits)}))};}
+      }
+      return {...p,quota,group,scopes,current:groups[current]===group};
+    });
+  }
+  deleteAccount({id,scopes=[]}){
+    if(!/^[a-f0-9]{32}$/.test(id)||!Array.isArray(scopes)||scopes.some(s=>!/^account:[a-f0-9]{32}$/.test(s)))throw Error('Invalid account');
+    const groups=this.metadata('accountGroups')||{},groupIds=new Set(scopes.map(s=>groups[s]).filter(Boolean));
+    scopes=[...new Set([...scopes,...Object.keys(groups).filter(s=>groupIds.has(groups[s]))])];
+    this.db.exec('BEGIN IMMEDIATE');
+    try{
+      const deleted=this.metadata('deletedAccountScopes')||{},profiles=this.metadata('accountProfiles')||{};
+      for(const scope of scopes){
+        this.db.prepare("DELETE FROM requests WHERE json_extract(data,'$.scope')=?").run(scope);
+        this.db.prepare('DELETE FROM snapshots WHERE scope=?').run(scope);deleted[scope]=this.now();
+        if(groups[scope])delete profiles[groups[scope]];
+      }
+      const bindings=this.metadata('cloudBindings')||{},related=new Set([id,...Object.keys(bindings).filter(key=>scopes.includes(bindings[key].scope))]);
+      for(const account of related){this.db.prepare('DELETE FROM cloud_shards WHERE account=?').run(account);delete bindings[account];}
+      this.setMetadata('cloudBindings',bindings);
+      if(related.has(this.metadata('cloudBinding')?.account))this.setMetadata('cloudBinding',null);
+      this.setMetadata('deletedAccountScopes',deleted);this.setMetadata('accountProfiles',profiles);
+      this.setMetadata('deletedCloudAccounts',{...(this.metadata('deletedCloudAccounts')||{}),...Object.fromEntries([...related].map(account=>[account,this.now()]))});
+      this.db.exec('COMMIT');return {scopes};
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  syncSettings({enabled=false,deviceId,statisticsMode='current',includeUnassigned=false,excludedAccounts=[],excludedDevices=[],accounts=[]}){
+    // Account labels and encrypted identity envelopes are not report metadata.
+    this.setMetadata('syncSelection',{enabled,deviceId,statisticsMode,includeUnassigned,excludedAccounts,excludedDevices,accounts:accounts.map(({id,scopes=[]})=>({id,scopes}))});
+  }
+  read(days = 84) {
+    const cutoff = this.now() - Math.min(366, Math.max(1, days)) * DAY;
+    const local=this.localRead(cutoff),selection=this.metadata('syncSelection'),current=this.metadata('currentScope'),groups=this.metadata('accountGroups')||{};
+    const bindings=this.metadata('cloudBindings')||{},legacy=this.metadata('cloudBinding');
+    if(legacy&&!bindings[legacy.account])bindings[legacy.account]=legacy;
+    if(!selection){
+      const binding=this.metadata('cloudSyncEnabled')===false?null:legacy?.scope===current?legacy:null;
+      const remote=binding?this.db.prepare('SELECT data FROM cloud_shards WHERE account=? AND scope=?').all(binding.account,binding.scope).map(r=>JSON.parse(r.data)):[];
+      const snapshots=new Map([...local.snapshots,...remote.flatMap(r=>r.snapshots.map(s=>({...s,scope:binding.scope}))).filter(r=>r.at>=cutoff)].map(s=>[snapshotId(s),s]));
+      return {requests:mergeRequests(local.requests,remote.flatMap(r=>r.requests).filter(r=>r.at>=cutoff)),snapshots:[...snapshots.values()].sort((a,b)=>a.at-b.at),currentScope:current,progress:this.metadata('progress')||this.progress};
+    }
+    const profiles=selection?.accounts||[];
+    const matches=(p,scope)=>p.scopes?.some(s=>s===scope||groups[s]&&groups[s]===groups[scope]);
+    const currentProfile=profiles.find(p=>matches(p,current));
+    const include=p=>selection?.statisticsMode==='all'||selection?.statisticsMode==='selected'&&!selection.excludedAccounts?.includes(p.id)||(!selection?.statisticsMode||selection.statisticsMode==='current')&&p.id===currentProfile?.id;
+    const selected=profiles.filter(include),selectedIds=new Set(selected.map(p=>p.id));
+    const localEnabled=!selection?.excludedDevices?.includes(selection?.deviceId);
+    const scopeAllowed=scope=>{
+      if(!scope||scope==='unidentified')return selection.includeUnassigned===true;
+      if(selection.statisticsMode==='all')return true;
+      if(selection.statisticsMode!=='selected')return scope===current||!!groups[current]&&groups[scope]===groups[current];
+      const p=profiles.find(p=>matches(p,scope));return !p||!selection.excludedAccounts?.includes(p.id);
+    };
+    const localRequests=localEnabled?local.requests.filter(r=>scopeAllowed(r.scope)):[];
+    const localSnapshots=localEnabled?local.snapshots.filter(r=>scopeAllowed(r.scope)):[];
+    const cloudEnabled=selection?selection.enabled:!!legacy;
+    const ids=[...selectedIds];
+    const rows=cloudEnabled&&ids.length?this.db.prepare('SELECT * FROM cloud_shards WHERE account IN ('+ids.map(()=>'?').join(',')+') ORDER BY account,id').all(...ids).filter(r=>!selection.excludedDevices?.includes(r.id.split('/').at(-2))):[];
+    const remote=rows.map(r=>{const data=JSON.parse(r.data);return {...data,account:r.account,scope:bindings[r.account]?.scope||r.scope};});
+    // Deduplicate within each account. The same response copied to another account
+    // must never erase one of that account's records in an all-account report.
+    const buckets=new Map();
+    for(const r of localRequests){const account=profiles.find(p=>matches(p,r.scope))?.id||groups[r.scope]||r.scope||'unassigned';if(!buckets.has(account))buckets.set(account,[]);buckets.get(account).push(r);}
+    for(const r of remote){if(!buckets.has(r.account))buckets.set(r.account,[]);buckets.get(r.account).push(...r.requests.filter(v=>v.at>=cutoff));}
+    const requests=[...buckets].flatMap(([account,rows])=>mergeRequests(rows,[]).map(r=>({...r,id:selection?account+':'+r.id:r.id})));
+    const snapshots=new Map([...localSnapshots,...remote.flatMap(r=>r.snapshots.map(s=>({...s,scope:r.scope}))).filter(r=>r.at>=cutoff)].map(s=>[snapshotId(s),s]));
+    return {requests,snapshots:[...snapshots.values()].sort((a,b)=>a.at-b.at),currentScope:current,progress:this.metadata('progress')||this.progress};
+  }
+  localRead(cutoff=this.now()-RETENTION){return {requests:this.db.prepare('SELECT data FROM requests WHERE at>=? ORDER BY at,id').all(cutoff).map(p=>JSON.parse(p.data)),snapshots:this.db.prepare('SELECT data FROM snapshots WHERE at>=? ORDER BY at,id').all(cutoff).map(p=>JSON.parse(p.data))};}
+  syncExport({claimLegacy=false,scopes}={}){
+    const scope=scopes?.[0]||this.metadata('currentScope');if(!scope||scope==='unidentified')throw Error('请先读取有效的 ZCode 账号额度');
+    if(claimLegacy){
+      this.db.exec('BEGIN');try{for(const r of this.db.prepare('SELECT id,data FROM requests').all()){
+        const value=JSON.parse(r.data);if(!value.scope){value.scope=scope;this.db.prepare('UPDATE requests SET data=? WHERE id=?').run(JSON.stringify(value),r.id);}
+      }this.db.exec('COMMIT');}catch(error){this.db.exec('ROLLBACK');throw error;}
+    }
+    const groups=this.metadata('accountGroups')||{},sameAccount=s=>scopes?.includes(s)||s===scope||!!groups[scope]&&groups[s]===groups[scope];
+    const local=this.localRead();return {scope,requests:local.requests.filter(r=>sameAccount(r.scope)),snapshots:local.snapshots.filter(s=>sameAccount(s.scope))};
+  }
+  syncImport({account,scope,shards,enabled=true}){
+    if(!enabled){this.setMetadata('cloudBinding',null);this.setMetadata('cloudSyncEnabled',false);return;}
+    if(!/^[a-f0-9]{32}$/.test(account)||!/^(account:[a-f0-9]{32}|cloud:[a-f0-9]{32})$/.test(scope)||!Array.isArray(shards)||shards.length>5000)throw Error('Invalid sync import');
+    const cutoff=this.metadata('deletedCloudAccounts')?.[account]??0;
+    const checked=shards.map(s=>{if(typeof s.id!=='string'||s.id.length>240)throw Error('Invalid shard');const data=numericRecords(s.data,this.now());return {...s,data:{...data,requests:data.requests.filter(r=>r.at>cutoff),snapshots:data.snapshots.filter(r=>r.at>cutoff)}};});
+    const retained=this.db.prepare("SELECT COALESCE(SUM(json_array_length(data,'$.requests')+json_array_length(data,'$.snapshots')),0) AS n FROM cloud_shards WHERE account<>?").get(account).n;
+    if(retained+checked.reduce((n,s)=>n+s.data.requests.length+s.data.snapshots.length,0)>500000)throw Error('Sync history exceeds local record limit');
+    this.db.exec('BEGIN');try{
+      this.db.prepare('DELETE FROM cloud_shards WHERE account=?').run(account);const put=this.db.prepare('INSERT INTO cloud_shards VALUES (?,?,?,?)');
+      for(const s of checked)put.run(account+'/'+s.id,account,scope,JSON.stringify(s.data));this.setMetadata('cloudSyncEnabled',true);this.setMetadata('cloudBinding',{account,scope});this.setMetadata('cloudBindings',{...(this.metadata('cloudBindings')||{}),[account]:{account,scope}});this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  close() {this.db.close();}
+}
+const HOUR = 3600000;

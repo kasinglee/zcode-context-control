@@ -1,0 +1,42 @@
+name: patched-runtime
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: patched-runtime-macos-arm64
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - uses: actions/cache/restore@v4
+        id: rust-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/patched-runtime-build/source/codex-rs/target
+          key: macos-arm64-codex-0160-${{ hashFiles('runtime-patches/**') }}
+      - run: node scripts/build-patched-runtime.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: patched-runtime-macos-arm64
+          path: build/patched-runtime/
+          retention-days: 30
+          if-no-files-found: warn
+      - uses: actions/cache/save@v4
+        if: always() && steps.rust-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            build/patched-runtime-build/source/codex-rs/target
+          key: macos-arm64-codex-0160-${{ hashFiles('runtime-patches/**') }}
