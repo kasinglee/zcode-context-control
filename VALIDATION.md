@@ -1,4 +1,13 @@
-# Validation · 0.27.16
+# Validation · 0.27.17
+
+Date: 2026-10-28 (Asia/Shanghai).
+
+- Fixed two service integration tests that assumed an existing ignored `.local` directory. Their fixtures now use isolated operating-system temporary directories.
+- Split macOS cumulative-usage string formatting and metric views to address the Swift compiler type-check timeout reported by GitHub Actions.
+- Local `npm run test:ci`: 102 passed, 0 failed, 3 platform-specific tests skipped.
+- GitHub Actions results for this revision are the authoritative cross-platform build/packaging validation; earlier local Windows results below do not imply a macOS build passed.
+
+## Historical validation · 0.27.16
 
 Date: 2026-10-28 (Asia/Shanghai). The 0.27.16 implementation was validated on Windows on 2026-10-27; tests were rerun before publishing the source.
 

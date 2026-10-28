@@ -37,14 +37,37 @@ struct CumulativeUsage:Decodable,Equatable {
 }
 struct UsageTotalsView:View {
  let usage:CumulativeUsage?;var global=false
+ private var tokenTotal:String {usage?.available == true ? (usage?.totalTokens ?? 0).formatted():"—"}
+ private var inputOutputLabel:String {
+  let input=(usage?.inputTokens ?? 0).formatted()
+  let output=(usage?.outputTokens ?? 0).formatted()
+  return "\(L("输入")) \(input) + \(L("输出")) \(output)"
+ }
+ private var unpricedLabel:String {
+  let count=usage?.cost?.unpricedRequests ?? 0
+  return "\(L("尚未计入金额的调用："))\(count)"
+ }
+ private var totals:some View {
+  HStack(alignment:.top){
+   VStack(alignment:.leading){
+    Text(L("累计消耗 token")).font(.caption).foregroundStyle(.secondary)
+    Text(tokenTotal).font(.title3).monospacedDigit()
+   }
+   Spacer()
+   VStack(alignment:.trailing){
+    Text(L("累计金额 · 官方参考价估算")).font(.caption).foregroundStyle(.secondary)
+    Text(usage?.money ?? "—").font(.title3).monospacedDigit()
+   }
+  }
+ }
  var body:some View {
   VStack(alignment:.leading,spacing:8){
    Text(L(global ? "所有项目累计用量":"本任务累计用量")).font(.headline)
-   HStack(alignment:.top){VStack(alignment:.leading){Text(L("累计消耗 token")).font(.caption).foregroundStyle(.secondary);Text(usage?.available == true ? (usage?.totalTokens ?? 0).formatted():"—").font(.title3).monospacedDigit()};Spacer();VStack(alignment:.trailing){Text(L("累计金额 · 官方参考价估算")).font(.caption).foregroundStyle(.secondary);Text(usage?.money ?? "—").font(.title3).monospacedDigit()}}
+   totals
    if usage?.available == true {
-    Text(L("输入")+" "+(usage?.inputTokens ?? 0).formatted()+" + "+L("输出")+" "+(usage?.outputTokens ?? 0).formatted()).font(.caption).foregroundStyle(.secondary)
+    Text(inputOutputLabel).font(.caption).foregroundStyle(.secondary)
     Text(L("本机用量账本，含子任务、压缩及标题生成；缓存和思考不重复相加。约每 15 秒更新，金额非实际账单。")).font(.caption).foregroundStyle(.secondary)
-    if (usage?.cost?.unpricedRequests ?? 0)>0{Text(L("尚未计入金额的调用：")+String(usage?.cost?.unpricedRequests ?? 0)).font(.caption).foregroundStyle(.orange)}
+    if (usage?.cost?.unpricedRequests ?? 0)>0{Text(unpricedLabel).font(.caption).foregroundStyle(.orange)}
     if usage?.stale == true{Text(L("账本读取暂时失败，当前显示上次成功汇总。")).font(.caption).foregroundStyle(.orange)}
    }else{Text(L("尚未读取到本地用量账本。")).font(.caption).foregroundStyle(.secondary)}
   }.padding(14).frame(maxWidth:.infinity,alignment:.leading).background(Color.primary.opacity(0.035),in:RoundedRectangle(cornerRadius:12))

@@ -1,6 +1,6 @@
 {
   "name": "zcode-context-control",
-  "version": "0.27.16",
+  "version": "0.27.17",
   "private": true,
   "type": "module",
   "description": "ZCode desktop context control and task queues, native macOS and Windows",
@@ -46,5 +46,5 @@
     "electron": "44.9.0",
     "rcedit": "5.0.2"
   },
-  "buildId": "a9bef84276e56a2a84a0"
+  "buildId": "5a5d9534ea8323af3f6e"
 }

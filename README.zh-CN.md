@@ -1,6 +1,11 @@
 # ZCode Context Control · 适配预览
 
-基于 `codex-context-control` 0.27.11 开发的 ZCode 桌面端适配版，版本 **0.27.16**。保留共享业务模块、macOS SwiftUI/AppKit 菜单栏和主窗口，以及 Windows Electron 托盘和主窗口的设计。
+基于 `codex-context-control` 0.27.11 开发的 ZCode 桌面端适配版，版本 **0.27.17**。保留共享业务模块、macOS SwiftUI/AppKit 菜单栏和主窗口，以及 Windows Electron 托盘和主窗口的设计。
+
+### 0.27.17 跨平台构建修复
+
+- 集成测试使用独立的系统临时目录，不依赖开发机已有的 `.local` 目录。
+- macOS 累计用量卡片拆分字符串格式化与视图，避免 Swift 编译器类型检查超时。
 
 ### 0.27.15 外观与任务分组
 

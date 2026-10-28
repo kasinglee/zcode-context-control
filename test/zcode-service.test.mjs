@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import {fileURLToPath} from 'node:url';
 import {spawn} from 'node:child_process';
 import net from 'node:net';
@@ -10,7 +11,7 @@ import {ipcEndpoint} from '../src/platform/index.mjs';
 import {authenticateClient} from '../src/ipc-auth.mjs';
 const repo=fileURLToPath(new URL('../',import.meta.url));
 test('Isolated service supports authenticated UI, native model discovery, policy persistence, compaction and queue dispatch',async t=>{
- const home=fs.mkdtempSync(path.join(repo,'.local','s-'));
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'zcode-service-'));
  let log='';const child=spawn(process.execPath,[path.join(repo,'src/daemon.mjs')],{env:{...process.env,ZCODE_CONTROL_USAGE_DB:path.join(home,"missing-usage.sqlite"),ZCODE_CONTROL_HOME:home,CONTEXT_CONTROL_HOME:home},stdio:['ignore','pipe','pipe']});
  child.stdout.on('data',b=>log+=b);child.stderr.on('data',b=>log+=b);
  t.after(async()=>{child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve);});fs.rmSync(home,{recursive:true,force:true});});
@@ -38,7 +39,7 @@ test('Isolated service supports authenticated UI, native model discovery, policy
  assert.equal((await call('/state')).taskQueues.quotaProtection,false);
 });
 test('Wrapper forwards a fake desktop exchange and joins the isolated manager without changing the application',async t=>{
- const home=fs.mkdtempSync(path.join(repo,'.local','w-')),entry=path.join(home,'fake-agent.cjs');
+ const home=fs.mkdtempSync(path.join(os.tmpdir(),'zcode-wrapper-')),entry=path.join(home,'fake-agent.cjs');
  const snapshot={session:{sessionId:'wrapper-session',title:'Wrapper fixture',workspace:{workspacePath:'/fixture/project'},sessionKind:'interactive',model:{providerId:'zai',modelId:'glm'},updatedAt:1700000000000},projection:{status:'idle',contextUsed:1234,contextWindow:200000,pendingPermissions:[]},runtime:{stateRevision:1,contextUsage:{used:1234,size:200000}}};
  snapshot.messages=[{info:{role:'assistant',sessionId:'wrapper-session',messageId:'billing-fixture',time:{completed:2},model:{providerId:'sensenova',modelId:'glm-5.2'},tokens:{input:100000,output:10000,reasoning:2000,cache:{read:80000,write:0}}}}];
  const frame={method:'v4/conversation/frame',params:{wireVersion:1,kind:'complete',topic:'conversation/wrapper-session',frame:{payload:{kind:'snapshot'}}}};
