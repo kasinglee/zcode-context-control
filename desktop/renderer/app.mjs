@@ -920,8 +920,12 @@ window.__contextQuotaSmoke=async function({preview=false}={}){
     result.chartHover=result.chartHover&&shown&&tooltip&&previousHidden;
     const before=document.querySelector('#qa-hover-tooltip')?.style.left;
     svg.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:screen.x+4,clientY:screen.y+4}));
-    const moved=document.querySelector('#qa-hover-tooltip')?.style.left!==before;
-    result.chartHoverChecks.push({shown,tooltip,previousHidden,moved});result.chartHover=result.chartHover&&moved;
+    const tip=document.querySelector('#qa-hover-tooltip'),box=tip?.getBoundingClientRect();
+    const moved=tip?.style.left!==before;
+    // A narrow CI viewport legitimately clamps the tooltip at its edge: the
+    // pointer can move while the popup stays put to remain readable.
+    const clamped=!!box&&(Math.abs(box.left-12)<0.5||Math.abs(box.right-(innerWidth-12))<0.5);
+    result.chartHoverChecks.push({shown,tooltip,previousHidden,moved,clamped});result.chartHover=result.chartHover&&(moved||clamped);
     previousGuide=guide;
   }
   document.dispatchEvent(new Event('scroll'));

@@ -18,9 +18,9 @@ if(standalone){setup=path.join(temp,'download/独立 安装器.exe');fs.mkdirSyn
 const state={version:9,policies:{saved:{window:180000}},threads:{},future:'keep'},ui={theme:'light',future:'keep'},settings={version:7,futurePreference:'keep'};
 for(const [name,value] of Object.entries({'state.json':state,'ui-settings.json':ui,'settings.json':settings,'language.json':{selection:'zh'}}))fs.writeFileSync(path.join(home,name),JSON.stringify(value));
 function run(source=payload,{remove=false,installer=setup,success=true}={}){
- const flags=['--no-open','--no-shortcut','--no-auto-start',...(remove?['--uninstall']:[])];
+ const flags=['--no-open','--no-shortcut','--no-auto-start'];
  const command=standalone?installer:process.execPath;
- const args=standalone?[remove?'--uninstall':'--install',...flags]:[path.join(repo,'scripts/install-win.mjs'),'--payload',source,...flags];
+ const args=standalone?[remove?'--uninstall':'--install',...flags]:[path.join(repo,'scripts/install-win.mjs'),'--payload',source,...flags,...(remove?['--uninstall']:[])];
  const result=spawnSync(command,args,{env,encoding:'utf8',windowsHide:true,timeout:180000});
  if(success)assert.equal(result.status,0,result.stdout+result.stderr);else assert.notEqual(result.status,0,'Corrupt payload must be rejected');
  assert.deepEqual(fs.readdirSync(extraction),[],'Extraction must be cleaned');
