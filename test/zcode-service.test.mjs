@@ -10,13 +10,19 @@ import {Peer} from '../src/ipc.mjs';
 import {ipcEndpoint} from '../src/platform/index.mjs';
 import {authenticateClient} from '../src/ipc-auth.mjs';
 const repo=fileURLToPath(new URL('../',import.meta.url));
+const startupTimeout=30000;
 test('Isolated service supports authenticated UI, native model discovery, policy persistence, compaction and queue dispatch',async t=>{
  const home=fs.mkdtempSync(path.join(os.tmpdir(),'zcode-service-'));
  let log='';const child=spawn(process.execPath,[path.join(repo,'src/daemon.mjs')],{env:{...process.env,ZCODE_CONTROL_USAGE_DB:path.join(home,"missing-usage.sqlite"),ZCODE_CONTROL_HOME:home,CONTEXT_CONTROL_HOME:home},stdio:['ignore','pipe','pipe']});
  child.stdout.on('data',b=>log+=b);child.stderr.on('data',b=>log+=b);
  t.after(async()=>{child.kill();await new Promise(resolve=>{if(child.exitCode!==null)resolve();else child.once('exit',resolve);});fs.rmSync(home,{recursive:true,force:true});});
- let connection;for(let i=0;i<100;i++){try{connection=JSON.parse(fs.readFileSync(path.join(home,'connection.json'),'utf8'));break;}catch{await new Promise(r=>setTimeout(r,30));}}
- assert.ok(connection,log);
+ let connection;const startupDeadline=Date.now()+startupTimeout;
+ while(Date.now()<startupDeadline){
+  try{connection=JSON.parse(fs.readFileSync(path.join(home,'connection.json'),'utf8'));break;}catch{}
+  if(child.exitCode!==null)break;
+  await new Promise(r=>setTimeout(r,50));
+ }
+ assert.ok(connection,`Service did not become ready within ${startupTimeout}ms (exit ${child.exitCode}): ${log}`);
  const call=async(route,body)=>{
   const response=await fetch(`http://127.0.0.1:${connection.port}${route}`,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+connection.token},body:body?JSON.stringify(body):undefined});
   const data=await response.json();assert.equal(response.ok,true,JSON.stringify(data));return data;
@@ -49,9 +55,11 @@ test('Wrapper forwards a fake desktop exchange and joins the isolated manager wi
  t.after(async()=>{wrapper.kill();await new Promise(r=>{if(wrapper.exitCode!==null)r();else wrapper.once('exit',r);});try{const c=JSON.parse(fs.readFileSync(path.join(home,'connection.json')));await fetch(`http://127.0.0.1:${c.port}/shutdown`,{method:'POST',headers:{Authorization:'Bearer '+c.token},body:'{}'});for(let i=0;i<40&&fs.existsSync(path.join(home,'connection.json'));i++)await new Promise(r=>setTimeout(r,30));}catch{}fs.rmSync(home,{recursive:true,force:true});});
  wrapper.stdin.write(JSON.stringify({id:'desktop-1',method:'session/create',params:{}})+'\n');
  let state;
- for(let i=0;i<120;i++){
+ const startupDeadline=Date.now()+startupTimeout;
+ while(Date.now()<startupDeadline){
   try{const c=JSON.parse(fs.readFileSync(path.join(home,'connection.json')));state=await (await fetch(`http://127.0.0.1:${c.port}/state`,{headers:{Authorization:'Bearer '+c.token}})).json();if(state.bridgeCount===1&&state.threads.length===1&&stdout.includes('desktop-1'))break;}catch{}
-  await new Promise(r=>setTimeout(r,30));
+  if(wrapper.exitCode!==null)break;
+  await new Promise(r=>setTimeout(r,50));
  }
  assert.equal(state?.bridgeCount,1,stderr);assert.equal(state.threads[0].lastUsage.totalTokens,1234);
  assert.equal(state.threads[0].nativeBilling.cost.currency,'CNY');assert.ok(Math.abs(state.threads[0].nativeBilling.cost.amount-0.6)<1e-12);
