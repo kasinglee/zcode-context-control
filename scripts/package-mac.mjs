@@ -35,7 +35,7 @@ const production=spawnSync('npm',['ls','--omit=dev','--all','--parseable'],{cwd:
 fs.mkdirSync(path.join(payload,'node_modules'));for(const directory of production.stdout.trim().split('\n').filter(p=>p!==repo.replace(/\/$/,''))){const relative=path.relative(repo,directory);if(!relative.startsWith('node_modules'+path.sep)||fs.lstatSync(directory).isSymbolicLink())throw Error('Unsupported production dependency path');fs.cpSync(directory,path.join(payload,relative),{recursive:true});} 
 pruneTokenizer(path.join(payload,'node_modules'));
 for(const file of ['package.json','package-lock.json','LICENSE','THIRD_PARTY_NOTICES.md'])fs.copyFileSync(path.join(repo,file),path.join(payload,file));
-fs.mkdirSync(path.join(payload,'scripts'));for(const name of ['install.mjs'])fs.copyFileSync(path.join(repo,'scripts',name),path.join(payload,'scripts',name));
+fs.mkdirSync(path.join(payload,'scripts'));for(const name of ['install.mjs','install-distribution.mjs'])fs.copyFileSync(path.join(repo,'scripts',name),path.join(payload,'scripts',name));
 fs.mkdirSync(path.join(payload,'build'));fs.cpSync(built,path.join(payload,'build/ZCode Context Control.app'),{recursive:true});
 fs.cpSync(path.join(repo,'third-party-licenses'),path.join(payload,'third-party-licenses'),{recursive:true});
 fs.mkdirSync(path.join(payload,'vendor'));fs.copyFileSync(path.join(nodeRoot,'bin/node'),path.join(payload,'vendor/node'));fs.chmodSync(path.join(payload,'vendor/node'),0o755);fs.copyFileSync(path.join(nodeRoot,'LICENSE'),path.join(payload,'vendor/Node-LICENSE.txt'));
@@ -51,29 +51,25 @@ const files={};let bytes=0;
 function scan(directory){for(const entry of fs.readdirSync(directory,{withFileTypes:true})){const file=path.join(directory,entry.name);if(entry.isSymbolicLink())throw Error('Unexpected symlink in package: '+file);if(entry.isDirectory())scan(file);else{const relative=path.relative(payload,file).split(path.sep).join('/');if(/(^|\/)(auth\.json|state\.json|connection\.json|\.env)$/.test(relative))throw Error('Private runtime file in payload');files[relative]=hash(file);bytes+=fs.statSync(file).size;}}}
 scan(payload);fs.writeFileSync(path.join(resources,'payload-manifest.json'),JSON.stringify({version,sourceRevision,dirtyWorkingTree:dirty(),arch:'arm64',nodeVersion:pin.version,developerIDSigned:!!identity,files},null,2)+'\n');
 run('/usr/bin/codesign',['--force',...(identity?['--options','runtime','--timestamp']:[]),'--sign',identity||'-',app]);run('/usr/bin/codesign',['--verify','--strict','--deep',app]);
-fs.writeFileSync(path.join(output,'README-FIRST.txt'),`Context Manager ${version} — Apple Silicon preview / 测试版
+fs.writeFileSync(path.join(output,'README-FIRST.txt'),`ZCode Context Control ${version} — Apple Silicon preview
 
-English | 中文
+1. Install ZCode first. No Node, npm, Homebrew or Xcode is required.
+2. Open the DMG and Install Context Manager.app; choose Install / Update.
+3. Open ZCode Context Control from your Applications folder.
+4. Fully quit ZCode before first integration, then choose Settings → General → Open ZCode in the manager.
+5. The installer can be deleted after installation. Reopen it to uninstall; settings and usage records are retained.
 
-1. Install ZCode / ChatGPT Desktop first.
-2. Open the DMG, open Install Context Manager.app, and choose Install / Update.
-3. Fully quit and reopen ZCode after initial installation or a bridge upgrade.
-4. Click the quota icon in the menu bar. Choose Automatic (time zone), 中文, or English in the app or installer.
-5. Optionally review the Stop hook in ZCode’s /hooks for Hook stats.
+先安装 ZCode，再打开 DMG 内的安装器选择「安装 / 更新」。安装后打开 Applications 中的 ZCode Context Control。
+首次接入前完整退出 ZCode，再在管理器「设置 → 通用 → 打开 ZCode」启动。预算、主题与偏好在升级时保留。
+深浅主题、default 分组、累计 token 与 GLM / DeepSeek 官方参考价估算已接入；未知价格不会当作零元。
+账户额度、账号切换、云同步与上游自动更新尚未接入。仅使用模型原生上下文上限。
 
-No Node, npm, Homebrew, Xcode, or administrator password is required. Budgets, language, and feature preferences are preserved on updates. The installer can be deleted after installation or reopened to uninstall.
+This preview is locally signed, not Developer ID signed or Apple notarized. If a trusted download is blocked,
+follow System Settings → Privacy & Security → Open Anyway. Do not disable system security.
+本预览包未 Apple 公证；确认下载来源后，可按「系统设置 → 隐私与安全」提示允许打开。
 
-The early-compaction fix is disabled because it replaces the ZCode core with a modified binary lacking the official ZCode signing identity, which can prevent Computer Use from working. The 920K extension only changes configuration and keeps the official runtime.
-
-This preview is locally signed, not Developer ID signed or Apple notarized. If a trusted download is blocked, follow System Settings → Privacy & Security → Open Anyway. Do not disable system security.
-
-Original project code is MIT licensed. Third-party components retain their licenses. This package excludes credentials, chat history, personal configuration, and the large optional patched ZCode runtime.
-
-提前压缩修复已停用：它需要替换 ZCode 核心，修改版缺少 ZCode 官方签名身份，会导致 Computer Use 无法使用。920K 扩展仅调整配置，继续使用官方运行时，无需修改核心。
-
-中文：先安装 ZCode 桌面客户端，打开 DMG 后打开安装器，选择「安装 / 更新」，再完整退出并重开 ZCode。菜单栏额度图标提供设置入口，App 与安装器均可选择「自动（按时区）／中文／English」。更新保留预算、语言和开关。本测试包尚未 Apple 公证；确认来源后按「隐私与安全」提示允许打开。项目使用 MIT 许可，第三方组件保留各自许可。
-
-https://github.com/Fandy-ust/zcode-context-control
+MIT license; third-party components retain their licenses. No credentials, chat history or personal configuration is bundled.
+https://github.com/kasinglee/zcode-context-control
 `);
 const image=path.join(output,`Context-Manager-${version}-macos-arm64.dmg`);
 const imageRoot=fs.mkdtempSync(path.join(output,'dmg-stage-'));

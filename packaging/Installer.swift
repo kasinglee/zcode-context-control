@@ -24,7 +24,7 @@ enum InstallFailure:LocalizedError {
             guard let resources=Bundle.main.resourceURL else{throw InstallFailure.message(L("找不到安装资源"))}
             let output=try await Task.detached(priority:.userInitiated){try Self.execute(resources:resources,uninstall:uninstall)}.value
             status=uninstall ? L("已移除 Context Manager"):L("安装完成")
-            detail=uninstall ? L("预算与备份已保留。"):L("请完整退出并重新打开 ZCode。菜单栏会自动出现 Context Manager。Hook stats 需在 ZCode 的 /hooks 中审核。")
+            detail=uninstall ? L("预算与备份已保留。"):L("打开 ZCode Context Control，在通用设置点击「打开 ZCode」启用适配连接。首次接入前请完整退出 ZCode。")
             finished = !uninstall
             if !output.isEmpty && uninstall{detail+="\n"+output}
         }catch{status=L("未能完成");detail=error.localizedDescription}
@@ -77,7 +77,7 @@ struct InstallerView:View {
                 if model.finished{Button(L("打开设置")){model.openSettings()}.buttonStyle(.borderedProminent)}
                 else{Button(L("安装 / 更新")){Task{await model.run()}}.buttonStyle(.borderedProminent).disabled(model.working)}
             }
-            Text(L("请先安装 ZCode / ChatGPT 桌面客户端。此包不包含可选的修复版 ZCode 核心。")).font(.caption).foregroundStyle(.secondary)
+            Text(L("请先安装 ZCode 桌面客户端。安装器内置 Node，无需开发工具；不修改 ZCode 原应用。")).font(.caption).foregroundStyle(.secondary)
         }.padding(32).frame(width:640).preferredColorScheme(.dark).environment(\.locale,Localization.locale)
     }
 }

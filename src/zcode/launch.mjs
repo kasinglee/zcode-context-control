@@ -21,7 +21,7 @@ export async function launchZcode({installation=discoverZcode(),node=process.exe
  const desktop=prepareDesktopEntry({installation,home});
  const stored=readJSON(path.join(home,'settings.json'),{});
  const windowsPanel=fileURLToPath(new URL(`../../build/Context-Manager-${version}-windows-${process.arch}/payload/ContextManager.exe`,import.meta.url));if(process.platform==='win32'&&fs.existsSync(windowsPanel))stored.installedApp=windowsPanel;
- const builtPanel=fileURLToPath(new URL('../../build/ZCode Context Control.app',import.meta.url));if(process.platform==='darwin'&&fs.existsSync(builtPanel))stored.installedApp=builtPanel;
+ const builtPanel=fileURLToPath(new URL('../../build/ZCode Context Control.app',import.meta.url));if(process.platform==='darwin'&&fs.existsSync(builtPanel)&&(!stored.installedApp||!fs.existsSync(stored.installedApp)))stored.installedApp=builtPanel;
  atomicJSON(path.join(home,'settings.json'),{...stored,version,node,desktopExecutable:installation.executable,provider:'zcode',launcher:fileURLToPath(import.meta.url)});
  await ensureDaemon();ensureMenuBarEntry(stored.installedApp,home);
  const child=spawn(installation.executable,[],{cwd:desktop.cwd,detached:true,windowsHide:true,stdio:'ignore',env:launchEnvironment({installation,node,home,runtime})});

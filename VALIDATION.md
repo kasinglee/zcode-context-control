@@ -1,4 +1,16 @@
-# Validation · 0.27.17
+# Validation · 0.27.18
+
+Date: 2026-10-28 (Asia/Shanghai).
+
+- Core tests: 102 passed, 0 failed, 4 platform/installer-dependent tests skipped locally (106 total).
+- Windows packaged English UI smoke tests passed, including chart hover at scaled SVG coordinates, native shortcut, slider and queue interactions. Smoke profiles isolate both control-home environment variables from the live installation.
+- The ZCode distribution test validates persistent installation, repeat install, preserved future settings/theme/state, bundled CLI, upgrades, manifest corruption rejection and uninstall. Separate single-EXE tests also delete the downloaded installer before checking the installed runtime.
+- macOS distribution validation runs on Apple Silicon Actions: signed-bundle verification, empty-PATH installation, repeat install, persistent bundled Node and SQLite after deletion of the download, preferences preservation and uninstall.
+- Windows/macOS jobs run concurrently. Release publication is gated on their success and uploads exactly one EXE and one DMG from the validated commit. The release notes include SHA-256 hashes.
+- Previous 0.27.17 Actions confirmed that the native macOS app now compiles; they also exposed the development-only installer and an SVG-boundary smoke-test issue addressed here. Final build/installer results are recorded in GitHub Actions for the release commit.
+- Packages do not include the local usage database, private `.local` state, credentials or machine-specific installer helpers. No Developer ID/Windows certificate signing is claimed; the DMG is locally signed and not notarized.
+
+## Historical validation · 0.27.17
 
 Date: 2026-10-28 (Asia/Shanghai).
 

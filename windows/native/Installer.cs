@@ -192,7 +192,7 @@ internal static class Installer {
     var form=new Form{Text="Context Manager",Width=620,Height=390,StartPosition=FormStartPosition.CenterScreen,BackColor=Color.FromArgb(24,24,24),ForeColor=Color.White};
     form.Icon=Icon.ExtractAssociatedIcon(Application.ExecutablePath);
     var title=new Label{Text="Context Manager · Windows",Left=24,Top=24,Width=550,Height=35,Font=new Font("Segoe UI",18)};
-    var note=new Label{Text="ZCode integration is enabled after its startup check.\n默认接入 ZCode；启动检查失败则保留原入口。保留预算和偏好。",Left=24,Top=70,Width=550,Height=50};
+    var note=new Label{Text="Install ZCode first. Open the manager, then choose Open ZCode.\n先安装 ZCode；在管理器中点击「打开 ZCode」接入。更新保留预算和偏好。",Left=24,Top=70,Width=550,Height=50};
     var install=new Button{Text="安装 / 更新 · Install / Update",Left=24,Top=130,Width=270,Height=38};
     var uninstall=new Button{Text="卸载 · Uninstall",Left=310,Top=130,Width=260,Height=38};
     var output=new TextBox{Left=24,Top=185,Width=546,Height=145,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,BackColor=Color.FromArgb(40,40,40),ForeColor=Color.White};

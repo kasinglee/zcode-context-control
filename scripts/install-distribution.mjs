@@ -1,0 +1,12 @@
+import path from 'node:path';
+import fs from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {defaultRoot} from '../src/platform/index.mjs';
+const source=fileURLToPath(new URL('../',import.meta.url)),args=process.argv.slice(2);
+const home=process.env.ZCODE_CONTROL_HOME||process.env.CONTEXT_CONTROL_HOME||defaultRoot();
+process.env.CONTEXT_CONTROL_HOME=home;process.env.ZCODE_CONTROL_HOME=home;
+const value=name=>args.includes(name)?args[args.indexOf(name)+1]:null;
+const payload=value('--payload')||(process.platform==='win32'&&fs.existsSync(path.resolve(source,'../..','payload-manifest.json'))?path.resolve(source,'../..'):null);
+const {installDistribution}=await import('../src/zcode/install-distribution.mjs');
+const result=await installDistribution({source,home,payload,applications:process.env.CONTEXT_CONTROL_APPLICATIONS,noOpen:args.includes('--no-open')||args.includes('--no-auto-start'),noShortcut:args.includes('--no-shortcut'),uninstall:args.includes('--uninstall')});
+console.log(JSON.stringify(result));

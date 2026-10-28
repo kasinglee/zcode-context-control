@@ -1,0 +1,24 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {execFileSync,spawnSync} from 'node:child_process';
+const version=JSON.parse(fs.readFileSync(new URL('../package.json',import.meta.url))).version;
+const directory=path.resolve(process.argv[2]||'release'),repository=process.env.GH_REPO||process.env.GITHUB_REPOSITORY;
+const revision=process.env.RELEASE_SOURCE_SHA||process.env.GITHUB_SHA;
+if(!/^[\w.-]+\/[\w.-]+$/.test(repository||'')||!/^\d+\.\d+\.\d+$/.test(version)||!/^[a-f0-9]{40}$/.test(revision||''))throw Error('Invalid release identity');
+const tag=`v${version}-preview.1`,names=[`Context-Manager-${version}-windows-x64-Setup.exe`,`Context-Manager-${version}-macos-arm64.dmg`];
+const assets=names.map(name=>{const file=path.join(directory,name),bytes=fs.readFileSync(file);if(bytes.length<1024)throw Error('Empty installer: '+name);return {name,file,sha256:crypto.createHash('sha256').update(bytes).digest('hex')};});
+const gh=(args,options={})=>execFileSync('gh',args,{encoding:'utf8',stdio:['ignore','pipe','pipe'],...options});
+const existingTag=spawnSync('gh',['api',`repos/${repository}/commits/${tag}`],{encoding:'utf8'});
+if(existingTag.status===0&&JSON.parse(existingTag.stdout).sha!==revision)throw Error('Release tag already points to a different commit');
+const notes=path.join(process.env.RUNNER_TEMP||directory,'zcode-release-notes.md');
+const summary=new URL(`../docs/releases/${version}-summary.md`,import.meta.url);
+fs.writeFileSync(notes,`# ZCode Context Control ${version}\n\n下载对应系统的一个安装文件，无需自行安装 Node 或开发工具。\n\n- [Windows x64 · 单文件 EXE 安装器](https://github.com/${repository}/releases/download/${tag}/${names[0]})\n- [macOS 14+ · Apple Silicon DMG](https://github.com/${repository}/releases/download/${tag}/${names[1]})\n\n先安装 ZCode。首次接入前完整退出 ZCode，然后在管理器「设置 → 通用 → 打开 ZCode」启动适配连接。更新前请关闭 ZCode；预算、主题、统计记录和偏好保留。安装器可在安装后删除，也可重新打开卸载。\n\n本版本是适配预览：macOS 尚未 Apple 公证，Windows 尚未配置代码签名证书。费用为本机记录的官方参考价估算，非渠道账单；价格未知的模型只统计已知 token。\n\n${fs.existsSync(summary)?fs.readFileSync(summary,'utf8'):''}\n\n源码提交：${revision}\n\n## SHA-256\n\n\`\`\`text\n${assets.map(a=>`${a.sha256}  ${a.name}`).join('\n')}\n\`\`\`\n`);
+const current=spawnSync('gh',['release','view',tag,'--repo',repository,'--json','isDraft'],{encoding:'utf8'});
+if(current.status===0){if(!JSON.parse(current.stdout).isDraft)throw Error('A published release is immutable; use a new version');gh(['release','edit',tag,'--repo',repository,'--notes-file',notes]);}
+else gh(['release','create',tag,'--repo',repository,'--draft','--prerelease','--target',revision,'--title',`ZCode Context Control ${version} · Windows & macOS`,'--notes-file',notes]);
+gh(['release','upload',tag,'--repo',repository,...assets.map(a=>a.file),'--clobber']);
+const uploaded=JSON.parse(gh(['release','view',tag,'--repo',repository,'--json','assets'])).assets.map(a=>a.name).sort();
+if(JSON.stringify(uploaded)!==JSON.stringify([...names].sort()))throw Error('Release must contain exactly one EXE and one DMG');
+gh(['release','edit',tag,'--repo',repository,'--draft=false','--prerelease']);
+console.log(`Published https://github.com/${repository}/releases/tag/${tag}`);

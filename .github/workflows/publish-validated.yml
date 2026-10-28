@@ -43,35 +43,9 @@ jobs:
           pattern: context-manager-*
           path: release
           merge-multiple: true
-      - run: node scripts/create-update-manifest.mjs release
-      - name: Publish the validated installers and update feeds
+      - name: Publish one EXE and one DMG after both platforms pass
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
-        run: |
-          version=$(node -p "require('./package.json').version")
-          tag="v${version}-preview.1"
-          if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
-            test "$(gh api "repos/$GH_REPO/commits/$tag" --jq '.sha')" = "$SOURCE_SHA"
-          fi
-          cat > release-notes.md <<EOF
-          ## 下载 / Download
-          - **Windows x64:** [安装程序 Setup.exe](https://github.com/$GH_REPO/releases/download/$tag/Context-Manager-$version-windows-x64-Setup.exe)
-          - **macOS Apple Silicon:** [安装镜像 DMG](https://github.com/$GH_REPO/releases/download/$tag/Context-Manager-$version-macos-arm64.dmg)
-
-          安装或更新保留已有配置、缓存和聊天历史。ZIP 与 JSON 附件供自动更新使用。
-          EOF
-          if [ -f "docs/releases/$version-summary.md" ]; then
-            printf '\n' >> release-notes.md
-            cat "docs/releases/$version-summary.md" >> release-notes.md
-          fi
-          printf '\n[完整更新记录](https://github.com/%s/blob/%s/CHANGELOG.md) · [安装说明](https://github.com/%s/blob/main/README.md)\n' "$GH_REPO" "$tag" "$GH_REPO" >> release-notes.md
-          if gh release view "$tag" --json isDraft > release-state.json 2>/dev/null; then
-            test "$(node -p "require('./release-state.json').isDraft")" = true
-            gh release edit "$tag" --target "$SOURCE_SHA" --notes-file release-notes.md
-          else
-            gh release create "$tag" --draft --target "$SOURCE_SHA" --title "Context Manager $version · macOS & Windows" --notes-file release-notes.md
-          fi
-          gh release upload "$tag" release/*.dmg release/*.exe release/*.zip release/*.sha256 release/*.json release/README-FIRST.txt --clobber
-          gh release edit "$tag" --draft=false --latest
+          RELEASE_SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: node scripts/publish-release.mjs release

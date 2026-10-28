@@ -906,17 +906,22 @@ window.__contextQuotaSmoke=async function({preview=false}={}){
   const heat=root.querySelector('.cost-cell:not(.empty)');heat?.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:200,clientY:200}));
   result.tooltip=!!document.querySelector('#qa-hover-tooltip .chart-tooltip-metrics');
   document.dispatchEvent(new Event('scroll'));result.tooltip=result.tooltip&&!document.querySelector('#qa-hover-tooltip');
-  result.chartHover=true;
+  result.chartHover=true;result.chartHoverChecks=[];
   let previousGuide;
   for(const svg of [...root.querySelectorAll('.qa-card .qa-chart')].slice(0,2)){
-    svg.scrollIntoView({block:'center'});await new Promise(resolve=>setTimeout(resolve,220));
+    svg.scrollIntoView({block:'center',behavior:'instant'});await new Promise(resolve=>setTimeout(resolve,220));
     const point=svg.querySelector('[data-qa-point]'),guide=svg.querySelector('.qa-hover-guide');
-    const local=new DOMPoint(+point.dataset.qaX,Math.min(+svg.dataset.qaBottom-1,+svg.dataset.qaTop+20)),screen=local.matrixTransform(svg.getScreenCTM());
+    // Stay inside the plot: a boundary point can round outside the SVG when
+    // Windows display scaling applies the inverse screen transformation.
+    const x=Math.max(+svg.dataset.qaLeft+2,Math.min(+svg.dataset.qaRight-8,+point.dataset.qaX));
+    const local=new DOMPoint(x,Math.min(+svg.dataset.qaBottom-1,+svg.dataset.qaTop+20)),screen=local.matrixTransform(svg.getScreenCTM());
     svg.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:screen.x,clientY:screen.y}));
-    result.chartHover=result.chartHover&&guide.getAttribute('visibility')==='visible'&&!!document.querySelector('#qa-hover-tooltip .chart-tooltip-metrics')&&(!previousGuide||previousGuide.getAttribute('visibility')==='hidden');
+    const shown=guide.getAttribute('visibility')==='visible',tooltip=!!document.querySelector('#qa-hover-tooltip .chart-tooltip-metrics'),previousHidden=!previousGuide||previousGuide.getAttribute('visibility')==='hidden';
+    result.chartHover=result.chartHover&&shown&&tooltip&&previousHidden;
     const before=document.querySelector('#qa-hover-tooltip')?.style.left;
     svg.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,clientX:screen.x+4,clientY:screen.y+4}));
-    result.chartHover=result.chartHover&&document.querySelector('#qa-hover-tooltip')?.style.left!==before;
+    const moved=document.querySelector('#qa-hover-tooltip')?.style.left!==before;
+    result.chartHoverChecks.push({shown,tooltip,previousHidden,moved});result.chartHover=result.chartHover&&moved;
     previousGuide=guide;
   }
   document.dispatchEvent(new Event('scroll'));

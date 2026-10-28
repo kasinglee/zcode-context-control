@@ -152,6 +152,7 @@ import AppKit
         let cli=model.home.appendingPathComponent("code/src/cli.mjs")
         guard FileManager.default.fileExists(atPath:cli.path) else{return}
         let process=Process();process.executableURL=URL(fileURLWithPath:settings.node)
+        process.environment=ProcessInfo.processInfo.environment.merging(["CONTEXT_CONTROL_HOME":model.home.path,"ZCODE_CONTROL_HOME":model.home.path]){_,new in new}
         process.arguments=[cli.path,"start"];process.standardOutput=FileHandle.nullDevice;process.standardError=FileHandle.nullDevice
         do{try process.run();serviceStarter=process}catch{model.notice=L("无法启动本地服务：{0}", error.localizedDescription)}
     }

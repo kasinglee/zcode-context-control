@@ -1,1 +1,1 @@
-await import('./install-current.mjs');
+await import('./install-distribution.mjs');

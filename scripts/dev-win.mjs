@@ -10,7 +10,7 @@ const electron=packaged?path.resolve(packaged):path.join(repo,'node_modules/elec
 if(!fs.existsSync(electron))throw Error('Run npm ci first');
 const env={...process.env,CONTEXT_CONTROL_NODE:process.execPath};delete env.ELECTRON_RUN_AS_NODE;
 const smoke=process.argv.includes('--smoke-test'),temporary=smoke?fs.mkdtempSync(path.join(os.tmpdir(),'ctc-ui-smoke-')):null;
-if(temporary)env.CONTEXT_CONTROL_HOME=temporary;
+if(temporary){env.CONTEXT_CONTROL_HOME=temporary;env.ZCODE_CONTROL_HOME=temporary;}
 const launchArgs=process.argv.slice(2);if(at>=0)launchArgs.splice(at-2,2);
 const languageAt=launchArgs.indexOf('--smoke-language');if(languageAt>=0){const language=launchArgs[languageAt+1];if(!temporary||!['zh','en'].includes(language))throw Error('Smoke language requires an isolated smoke test');fs.writeFileSync(path.join(temporary,'language.json'),JSON.stringify({selection:language}));launchArgs.splice(languageAt,2);}
 const child=spawn(electron,[...(packaged?[]:[path.join(repo,'desktop/main.mjs')]),...launchArgs],{env,stdio:'inherit',windowsHide:true});child.on('exit',code=>{if(temporary)try{removeInstallationTree(os.tmpdir(),temporary);}catch{}process.exitCode=code??1;});child.on('error',e=>{console.error(e.message);process.exitCode=1;});
